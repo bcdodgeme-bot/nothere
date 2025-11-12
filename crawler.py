@@ -10,7 +10,7 @@ import argparse
 import logging
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
-from datetime import datetime
+from datetime import datetime, UTC
 import hashlib
 
 import requests
@@ -22,9 +22,12 @@ from blocklist import get_blocklist
 
 
 # Configure logging
+import sys
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout  # ← Add this line!
 )
 logger = logging.getLogger(__name__)
 
