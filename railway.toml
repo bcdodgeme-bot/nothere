@@ -5,3 +5,11 @@ builder = "NIXPACKS"
 startCommand = "python3 crawler.py --delay 1.5"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
+
+# NEW: Add this cron service for automated updates
+[[services]]
+name = "scoring-updater"
+
+[services.cron]
+schedule = "0 2 * * *"  # Daily at 2 AM UTC
+command = "python3 automated_updater.py"
