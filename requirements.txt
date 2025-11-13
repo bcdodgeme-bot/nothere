@@ -13,3 +13,7 @@ redis>=5.0.0
 
 # Optional but recommended
 python-dotenv>=1.0.0  # For .env file support
+
+textstat>=0.7.3          # For readability scoring (Flesch-Kincaid)
+python-whois>=0.8.0      # For domain age (optional - can be slow)
+langdetect>=1.0.9        # For language detection (optional)
