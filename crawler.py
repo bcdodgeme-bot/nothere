@@ -19,11 +19,10 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 from blocklist import get_blocklist
+from composite_scorer import CompositeScorer
 
 
 # Configure logging
-import sys
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -44,6 +43,10 @@ class Crawler:
         self.politeness_delay = politeness_delay
         self.robots_cache = {}  # Cache robots.txt parsers
         
+        # Initialize composite scorer
+        self.scorer = CompositeScorer(db_conn)
+        logger.info("✅ Composite scorer initialized")
+        
         # User agent
         self.headers = {
             'User-Agent': 'NotHere.one Bot/1.0 (Values-based search engine; +https://nothere.one/bot)'
@@ -54,6 +57,8 @@ class Crawler:
             'pages_crawled': 0,
             'pages_blocked': 0,
             'pages_failed': 0,
+            'pages_scored': 0,
+            'pages_score_failed': 0,
             'links_found': 0,
             'urls_queued': 0
         }
@@ -352,6 +357,35 @@ class Crawler:
         # Save links
         self.save_links(page_id, extracted['links'])
         
+        # Score the page with composite scorer
+        try:
+            parsed = urlparse(final_url)
+            domain = parsed.netloc
+            
+            final_score = self.scorer.score_page(
+                page_id=page_id,
+                url=final_url,
+                title=extracted['title'],
+                content=extracted['content'],
+                domain=domain,
+                crawled_at=crawled_at
+            )
+            
+            self.stats['pages_scored'] += 1
+            
+            # Log score for visibility
+            if final_score < 40:
+                logger.info(f"   📊 Score: {final_score}/100 (NOT INDEXABLE)")
+            elif final_score >= 70:
+                logger.info(f"   📊 Score: {final_score}/100 ✅")
+            else:
+                logger.info(f"   📊 Score: {final_score}/100")
+        
+        except Exception as e:
+            logger.error(f"   ❌ Scoring failed: {e}")
+            self.stats['pages_score_failed'] += 1
+            # Continue crawling even if scoring fails
+        
         # Queue new URLs
         for link in extracted['links']:
             self.queue_url(link['url'])
@@ -403,6 +437,8 @@ class Crawler:
         logger.info("CRAWL STATISTICS")
         logger.info("="*60)
         logger.info(f"Pages crawled:     {self.stats['pages_crawled']}")
+        logger.info(f"Pages scored:      {self.stats['pages_scored']}")
+        logger.info(f"Scoring failed:    {self.stats['pages_score_failed']}")
         logger.info(f"Pages blocked:     {self.stats['pages_blocked']}")
         logger.info(f"Pages failed:      {self.stats['pages_failed']}")
         logger.info(f"Links found:       {self.stats['links_found']}")
