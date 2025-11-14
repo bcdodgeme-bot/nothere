@@ -5,14 +5,14 @@ Evaluates crawled pages across 5 dimensions:
 1. Islamic Alignment (-100 to +100, normalized to 0-100) - 30% weight
 2. Quality Score (0-100) - 25% weight
 3. Authority Score (0-100) - 20% weight
-4. Media Literacy Score (0-100, stub) - 15% weight
+4. Media Literacy Score (0-100, AI-powered) - 15% weight
 5. Equity Boost (0-30 bonus points) - 10% weight
 
 Final Score: 0-100 (determines indexing and ranking)
-- Score < 40: Do not index
-- Score 40-69: Index, low rank
-- Score 70-89: Index, medium rank
-- Score 90+: Index, high rank
+- Score < 25: Do not index
+- Score 25-40: Index, low rank
+- Score 40-50: Index, medium rank
+- Score 50+: Index, high rank
 
 Override: SPLC/ACLU/CAIR flagged = instant 0 (never index)
 """
@@ -67,7 +67,7 @@ class CompositeScorer:
         # Educational/research domains (context-aware scoring)
         self.educational_tlds = {'.edu', '.gov', '.ac.uk', '.ac.in', '.edu.au'}
         self.news_domains = {
-            'bbc.com', 'bbc.co.uk', 'reuters.com', 'apnews.com', 
+            'bbc.com', 'bbc.co.uk', 'reuters.com', 'apnews.com',
             'ap.org', 'aljazeera.com', 'npr.org', 'pbs.org'
         }
         
@@ -146,7 +146,7 @@ class CompositeScorer:
             context['is_news'] = True
         
         # Research indicators
-        research_terms = ['research', 'study', 'paper', 'journal', 'academic', 
+        research_terms = ['research', 'study', 'paper', 'journal', 'academic',
                          'university', 'scholar', 'peer-reviewed', 'abstract']
         if any(term in content_lower for term in research_terms):
             context['is_research'] = True
@@ -726,23 +726,44 @@ class CompositeScorer:
     # MEDIA LITERACY (STUB)
     # ========================================================================
     
-    def calculate_media_literacy_score(self, content, domain):
+    def calculate_media_literacy_score(self, content, domain, title=None):
         """
-        Media literacy score (STUB - returns neutral 50)
+        Media literacy score using AI-powered pattern detection
         
-        Future: OpenRouter API integration to detect:
+        Detects:
         - Scientific consensus mismatch
         - Extraordinary claims without evidence
         - Statistical manipulation
         - Source-expertise mismatch
         - Conflict of interest
         - Historical revisionism
+        - Predatory economic patterns
+        
+        Cost-optimized: Only analyzes content with red flag keywords
         
         Returns:
             tuple: (score: int, details: dict)
         """
-        # TODO: Implement OpenRouter integration
-        return 50, {'status': 'stub', 'note': 'Returns neutral score pending AI integration'}
+        try:
+            from media_literacy_scorer import calculate_media_literacy_score
+            
+            # Pass all parameters including title
+            score, details = calculate_media_literacy_score(
+                content=content,
+                domain=domain,
+                title=title,
+                db_conn=self.db_conn
+            )
+            
+            return score, details
+            
+        except ImportError:
+            logger.warning("media_literacy_scorer not found, returning neutral score")
+            return 50, {'status': 'stub', 'note': 'Scorer module not available'}
+        except Exception as e:
+            logger.error(f"Media literacy scoring failed: {e}")
+            # Graceful degradation - return neutral score
+            return 50, {'status': 'error', 'error': str(e)}
     
     # ========================================================================
     # COMPOSITE CALCULATION
@@ -825,8 +846,8 @@ class CompositeScorer:
             'details': authority_details
         }
         
-        # 4. Media Literacy (15%) - stub
-        media_score, media_details = self.calculate_media_literacy_score(content, domain)
+        # 4. Media Literacy (15%)
+        media_score, media_details = self.calculate_media_literacy_score(content, domain, title)
         components['media_literacy'] = {
             'score': media_score,
             'details': media_details
@@ -852,7 +873,7 @@ class CompositeScorer:
         final_score = int(round(composite))
         
         # Determine indexability
-        indexable = final_score >= 40
+        indexable = final_score >= 25
         
         result['islamic_alignment_score'] = int(islamic_score)
         result['quality_score'] = quality_score
@@ -1060,7 +1081,7 @@ if __name__ == '__main__':
     # Get database connection
     database_url = os.getenv('DATABASE_URL')
     if not database_url:
-        print("❌ ERROR: DATABASE_URL not set")
+        print("âŒ ERROR: DATABASE_URL not set")
         exit(1)
     
     if database_url.startswith('postgres://'):
@@ -1089,12 +1110,12 @@ if __name__ == '__main__':
     for page_id, url, domain in test_pages:
         try:
             score = score_page_by_id(conn, page_id)
-            print(f"✅ {domain}: {score}/100")
+            print(f"âœ… {domain}: {score}/100")
         except Exception as e:
-            print(f"❌ {domain}: Error - {e}")
+            print(f"âŒ {domain}: Error - {e}")
     
     conn.close()
     
     print("\n" + "="*60)
-    print("✅ Test complete")
+    print("âœ… Test complete")
     print("="*60)
