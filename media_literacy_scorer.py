@@ -36,7 +36,7 @@ class MediaLiteracyScorer:
         self.base_url = 'https://openrouter.ai/api/v1/chat/completions'
         
         # Model configuration
-        self.primary_model = 'google/gemini-flash-1.5'
+        self.primary_model = 'google/gemini-2.5-flash-lite'
         self.fallback_model = 'openrouter/auto'
         self.blocked_models = ['openai/gpt-4o', 'openai/o1', 'openai/o1-mini']
         
