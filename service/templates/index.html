@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}NotHere.one - Search Smarter{% endblock %}
+
+{% block header_class %}header-minimal{% endblock %}
+
+{% block header_search %}
+<!-- No search in header on homepage -->
+{% endblock %}
+
+{% block content %}
+<div class="homepage">
+    <!-- Hero Section -->
+    <div class="hero">
+        <!-- Owl Logo -->
+        <div class="hero-logo">
+            <img src="{{ url_for('static', filename='owl-logo.png') }}" alt="NotHere.one Owl Mascot" class="owl-logo">
+        </div>
+        
+        <!-- Brand Name -->
+        <h1 class="hero-title">
+            NotHere<span class="hero-dot">.one</span>
+        </h1>
+        
+        <!-- Tagline -->
+        <p class="hero-tagline">Search Smarter</p>
+        
+        <!-- Main Search Form -->
+        <form action="{{ url_for('search') }}" method="GET" class="search-form">
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    name="q" 
+                    class="search-input"
+                    placeholder="What are you looking for?"
+                    maxlength="300"
+                    autocomplete="off"
+                    autofocus
+                >
+                <button type="submit" class="search-btn" aria-label="Search">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                </button>
+            </div>
+        </form>
+        
+        <!-- Quick Info -->
+        <div class="hero-info">
+            <button class="info-btn" id="about-btn-hero">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M12 16v-4"></path>
+                    <path d="M12 8h.01"></path>
+                </svg>
+                What is NotHere.one?
+            </button>
+        </div>
+    </div>
+    
+    <!-- Stats Section -->
+    <div class="stats-section">
+        <div class="stats-container">
+            <div class="stat-item">
+                <span class="stat-value">{{ stats.indexable_pages|format_number }}</span>
+                <span class="stat-label">Pages Indexed</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <span class="stat-value">{{ stats.unique_domains|format_number }}</span>
+                <span class="stat-label">Domains</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <span class="stat-value">{{ stats.high_quality|format_number }}</span>
+                <span class="stat-label">High Quality</span>
+            </div>
+        </div>
+        
+        {% if stats.last_crawled %}
+        <p class="stats-updated">
+            Last updated: {{ stats.last_crawled|time_ago }}
+        </p>
+        {% endif %}
+    </div>
+    
+    <!-- Features Preview -->
+    <div class="features-section">
+        <div class="features-container">
+            <div class="feature-item">
+                <span class="feature-icon">🛡️</span>
+                <span class="feature-text">Filters harmful content</span>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">✊</span>
+                <span class="feature-text">Boosts diverse voices</span>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🧠</span>
+                <span class="feature-text">Rewards critical thinking</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Internet Points Teaser (if user has points) -->
+    {% if session.total_points > 0 %}
+    <div class="points-teaser">
+        <div class="points-teaser-content">
+            <span class="points-teaser-icon">🧠</span>
+            <span class="points-teaser-text">
+                You have <strong>{{ session.total_points|format_number }}</strong> Internet Points!
+            </span>
+            <a href="{{ url_for('leaderboard') }}" class="points-teaser-link">View Leaderboard →</a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Additional about button on homepage
+    const aboutBtnHero = document.getElementById('about-btn-hero');
+    if (aboutBtnHero) {
+        aboutBtnHero.addEventListener('click', function() {
+            document.getElementById('about-modal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+    }
+    
+    // Focus search input on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchInput = document.querySelector('.search-input');
+        if (searchInput) {
+            searchInput.focus();
+        }
+    });
+</script>
+{% endblock %}

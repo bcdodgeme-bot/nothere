@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Leaderboard - NotHere.one{% endblock %}
+
+{% block content %}
+<div class="leaderboard-page">
+    <div class="leaderboard-container">
+        <!-- Header -->
+        <header class="leaderboard-header">
+            <h1>🏆 Leaderboard</h1>
+            <p class="leaderboard-subtitle">Top Critical Thinkers</p>
+        </header>
+        
+        <!-- User's Stats Card -->
+        <div class="user-stats-card">
+            <div class="user-stats-icon">🧠</div>
+            <div class="user-stats-content">
+                <div class="user-stats-points">
+                    <span class="user-points-value">{{ session.total_points|format_number }}</span>
+                    <span class="user-points-label">Internet Points</span>
+                </div>
+                <div class="user-stats-details">
+                    <span class="user-quests">
+                        {{ session.quests_completed|format_number }} quests completed
+                    </span>
+                    {% if user_rank %}
+                    <span class="user-rank">
+                        Rank: #{{ user_rank|format_number }}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            {% if session.total_points == 0 %}
+            <div class="user-stats-cta">
+                <p>Start earning points by fact-checking claims in search results!</p>
+                <a href="{{ url_for('index') }}" class="cta-btn">Start Searching →</a>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- How to Earn Points -->
+        <div class="earn-points-info">
+            <h2>💡 How to Earn Internet Points</h2>
+            <div class="earn-methods">
+                <div class="earn-method">
+                    <span class="earn-icon">🎯</span>
+                    <span class="earn-text">Complete Side Quests</span>
+                    <span class="earn-points">+5 pts</span>
+                </div>
+                <div class="earn-method">
+                    <span class="earn-icon">🤔</span>
+                    <span class="earn-text">Investigate suspicious claims</span>
+                    <span class="earn-points">+5 pts</span>
+                </div>
+                <div class="earn-method">
+                    <span class="earn-icon">📚</span>
+                    <span class="earn-text">Read counter-evidence</span>
+                    <span class="earn-points">+5 pts</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Leaderboard Table -->
+        {% if leaders %}
+        <div class="leaderboard-table-wrapper">
+            <table class="leaderboard-table">
+                <thead>
+                    <tr>
+                        <th class="col-rank">Rank</th>
+                        <th class="col-user">User</th>
+                        <th class="col-points">Points</th>
+                        <th class="col-quests">Quests</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for leader in leaders %}
+                    <tr class="{% if leader.session_id == session.session_id %}current-user{% endif %} {% if leader.rank <= 3 %}top-three{% endif %}">
+                        <td class="col-rank">
+                            {% if leader.rank == 1 %}
+                            <span class="rank-medal">🥇</span>
+                            {% elif leader.rank == 2 %}
+                            <span class="rank-medal">🥈</span>
+                            {% elif leader.rank == 3 %}
+                            <span class="rank-medal">🥉</span>
+                            {% else %}
+                            <span class="rank-number">#{{ leader.rank }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-user">
+                            {% if leader.session_id == session.session_id %}
+                            <span class="user-you">You! ⭐</span>
+                            {% else %}
+                            <span class="user-anonymous">Anonymous_{{ leader.session_id[:8] }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-points">
+                            <span class="points-value">{{ leader.total_points|format_number }}</span>
+                        </td>
+                        <td class="col-quests">
+                            <span class="quests-value">{{ leader.quests_completed|format_number }}</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        {% if leaders|length >= 100 %}
+        <p class="leaderboard-note">Showing top 100 critical thinkers</p>
+        {% endif %}
+        
+        {% else %}
+        <!-- Empty Leaderboard -->
+        <div class="leaderboard-empty">
+            <div class="empty-icon">🏆</div>
+            <h2>No rankings yet!</h2>
+            <p>Be the first to earn Internet Points by fact-checking claims in search results.</p>
+            <a href="{{ url_for('index') }}" class="cta-btn">Start Searching →</a>
+        </div>
+        {% endif %}
+        
+        <!-- Motivational Footer -->
+        <div class="leaderboard-motivation">
+            <p>
+                Every point represents a moment of critical thinking. 
+                <br>Keep questioning, keep learning, keep climbing! 🚀
+            </p>
+        </div>
+        
+        <!-- Back to Search -->
+        <div class="leaderboard-back">
+            <a href="{{ url_for('index') }}" class="back-link">
+                ← Back to Search
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

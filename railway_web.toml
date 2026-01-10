@@ -1,0 +1,14 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python3 app.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Environment variables needed:
+# - DATABASE_URL (auto-set by Railway PostgreSQL)
+# - REDIS_URL (auto-set by Railway Redis)
+# - OPENROUTER_API_KEY (set manually)
+# - SECRET_KEY (set manually - generate a random string)
+# - FLASK_ENV=production

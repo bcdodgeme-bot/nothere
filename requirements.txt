@@ -1,0 +1,25 @@
+# NotHere.one Dependencies
+# Web Framework
+Flask>=3.0.0
+gunicorn>=21.0.0
+Werkzeug>=3.0.0
+
+# Web scraping (crawler)
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Database
+psycopg2-binary>=2.9.9
+
+# Cache/Queue
+redis>=5.0.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Scoring dependencies
+textstat>=0.7.3
+
+# Optional
+langdetect>=1.0.9

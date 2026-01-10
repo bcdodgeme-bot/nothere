@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Privacy Policy - NotHere.one{% endblock %}
+
+{% block content %}
+<div class="privacy-page">
+    <div class="privacy-container">
+        <header class="privacy-header">
+            <h1>Privacy Policy</h1>
+            <p class="privacy-updated">Last updated: January 2026</p>
+        </header>
+        
+        <!-- The Short Version -->
+        <section class="privacy-section privacy-highlight">
+            <h2>📋 The Short Version</h2>
+            <p>
+                We're a search engine built on ethics, and that includes how we treat your data. 
+                We collect almost nothing, track almost nothing, and sell absolutely nothing.
+            </p>
+        </section>
+        
+        <!-- What We Collect -->
+        <section class="privacy-section">
+            <h2>📥 What We Collect</h2>
+            
+            <h3>When you search:</h3>
+            <ul>
+                <li>Your search queries (to show you results)</li>
+                <li>We may log anonymized search terms to improve our index — never tied to you personally</li>
+            </ul>
+            
+            <h3>When you use Internet Points:</h3>
+            <ul>
+                <li>A random session ID stored in your browser (cookie)</li>
+                <li>Your point total and completed quests</li>
+                <li>This stays on your device unless you opt into a future leaderboard</li>
+            </ul>
+            
+            <h3>When you give feedback:</h3>
+            <ul>
+                <li>Which results you marked "helpful" or "not helpful"</li>
+                <li>Linked to your anonymous session, not your identity</li>
+            </ul>
+        </section>
+        
+        <!-- What We Don't Collect -->
+        <section class="privacy-section">
+            <h2>🚫 What We Don't Collect</h2>
+            <ul class="privacy-dont-list">
+                <li>
+                    <span class="dont-icon">✗</span>
+                    Your name, email, or any personal information
+                </li>
+                <li>
+                    <span class="dont-icon">✗</span>
+                    Your location (we don't do location-based results)
+                </li>
+                <li>
+                    <span class="dont-icon">✗</span>
+                    Your browsing history outside of NotHere.one
+                </li>
+                <li>
+                    <span class="dont-icon">✗</span>
+                    Anything we could sell to advertisers (we don't have advertisers)
+                </li>
+            </ul>
+        </section>
+        
+        <!-- Cookies -->
+        <section class="privacy-section">
+            <h2>🍪 Cookies</h2>
+            <p>
+                We use <strong>one cookie</strong>: your anonymous session ID for Internet Points. 
+                That's it.
+            </p>
+            <ul class="privacy-dont-list">
+                <li>
+                    <span class="dont-icon">✗</span>
+                    No third-party tracking cookies
+                </li>
+                <li>
+                    <span class="dont-icon">✗</span>
+                    No analytics surveillance
+                </li>
+                <li>
+                    <span class="dont-icon">✗</span>
+                    No fingerprinting
+                </li>
+            </ul>
+        </section>
+        
+        <!-- Our Filtering -->
+        <section class="privacy-section">
+            <h2>🔍 Our Filtering (Transparency)</h2>
+            <p>
+                NotHere.one filters search results based on ethical criteria. 
+                We believe you have a right to know how:
+            </p>
+            
+            <div class="filtering-grid">
+                <div class="filtering-card filtering-exclude">
+                    <h3>🛡️ We Exclude</h3>
+                    <ul>
+                        <li>Content from SPLC-designated hate groups</li>
+                        <li>Misinformation and conspiracy content</li>
+                        <li>Adult content</li>
+                        <li>Gambling sites</li>
+                        <li>Predatory lending</li>
+                        <li>MLM schemes</li>
+                    </ul>
+                </div>
+                
+                <div class="filtering-card filtering-boost">
+                    <h3>✊ We Boost</h3>
+                    <ul>
+                        <li>Minority-owned businesses</li>
+                        <li>Women-owned businesses</li>
+                        <li>Veteran-owned businesses</li>
+                        <li>LGBTQ+-owned businesses</li>
+                        <li>Disability-owned businesses</li>
+                        <li>B-Corp certified companies</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <p class="filtering-note">
+                We also flag content that conflicts with scientific consensus — 
+                and reward you with Internet Points for engaging with the facts!
+            </p>
+        </section>
+        
+        <!-- Future Accounts -->
+        <section class="privacy-section">
+            <h2>🔮 Future Accounts</h2>
+            <p>
+                We may offer optional accounts in the future for features like saved searches 
+                or leaderboard rankings. If we do:
+            </p>
+            <ul>
+                <li>We'll update this policy</li>
+                <li>We'll never require more information than necessary</li>
+                <li>Accounts will always be optional</li>
+            </ul>
+        </section>
+        
+        <!-- Contact -->
+        <section class="privacy-section">
+            <h2>📬 Questions?</h2>
+            <p>
+                If you have questions about this privacy policy or how we handle data, 
+                reach out to us. We're real people who care about doing this right.
+            </p>
+            <p class="privacy-contact">
+                <!-- Update with actual contact info -->
+                Contact: <a href="mailto:privacy@nothere.one">privacy@nothere.one</a>
+            </p>
+        </section>
+        
+        <!-- Back to Search -->
+        <div class="privacy-back">
+            <a href="{{ url_for('index') }}" class="back-link">
+                ← Back to Search
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

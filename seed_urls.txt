@@ -1,0 +1,46 @@
+# NotHere.one Seed URLs
+# Clean, diverse URLs for initial crawl testing
+
+# News & Current Events
+https://www.bbc.com/news
+https://www.reuters.com
+https://apnews.com
+https://www.aljazeera.com
+
+# Islamic & Religious Content
+https://islamqa.info/en
+https://seekersguidance.org
+https://yaqeeninstitute.org
+https://bayyinah.com
+https://www.islamicity.org
+
+# Educational Resources
+https://www.khanacademy.org
+https://www.coursera.org/browse
+https://ocw.mit.edu
+https://www.edx.org
+
+# Wikipedia & Reference
+https://en.wikipedia.org/wiki/Islamic_Golden_Age
+https://en.wikipedia.org/wiki/Science
+https://en.wikipedia.org/wiki/Philosophy
+https://simple.wikipedia.org/wiki/Main_Page
+
+# Government & Academic
+https://www.nasa.gov
+https://www.nih.gov
+https://www.loc.gov
+https://www.stanford.edu
+https://www.harvard.edu
+
+# Technology & Science
+https://www.scientificamerican.com
+https://arstechnica.com
+https://stackoverflow.com
+https://github.com/explore
+
+# General Knowledge
+https://www.britannica.com
+https://www.nationalgeographic.com
+https://www.smithsonianmag.com
+https://www.history.com

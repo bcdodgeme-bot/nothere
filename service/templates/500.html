@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Server Error - NotHere.one{% endblock %}
+
+{% block content %}
+<div class="error-page">
+    <div class="error-container">
+        <div class="error-icon">🦉💤</div>
+        <h1 class="error-code">500</h1>
+        <h2 class="error-title">Something Went Wrong</h2>
+        <p class="error-message">
+            Our owl is taking an unexpected nap. We've been notified and are working on it!
+        </p>
+        <div class="error-actions">
+            <a href="{{ url_for('index') }}" class="error-btn primary">
+                ← Back to Search
+            </a>
+            <button onclick="location.reload()" class="error-btn secondary">
+                Try Again
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
