@@ -182,8 +182,8 @@ def search_pages(query, sort='relevance', page=1):
         WHERE indexable = true
           AND final_composite_score >= %s
           AND (
-              title % %s 
-              OR content % %s
+              title %% %s 
+              OR content %% %s
               OR title ILIKE %s
               OR content ILIKE %s
           )
@@ -222,8 +222,8 @@ def search_pages(query, sort='relevance', page=1):
             WHERE p.indexable = true
               AND p.final_composite_score >= %s
               AND (
-                  p.title % %s 
-                  OR p.content % %s
+                  p.title %% %s 
+                  OR p.content %% %s
                   OR p.title ILIKE %s
                   OR p.content ILIKE %s
               )
@@ -261,8 +261,8 @@ def search_pages(query, sort='relevance', page=1):
             WHERE p.indexable = true
               AND p.final_composite_score >= %s
               AND (
-                  p.title % %s 
-                  OR p.content % %s
+                  p.title %% %s 
+                  OR p.content %% %s
                   OR p.title ILIKE %s
                   OR p.content ILIKE %s
               )
