@@ -1,17 +1,30 @@
 [build]
 builder = "NIXPACKS"
 
-[deploy]
+# Service 1: Web App (Flask)
+[[services]]
+name = "web"
+
+[services.deploy]
 startCommand = "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
 healthcheckPath = "/"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
-# NEW: Add this cron service for automated updates
+# Service 2: Crawler (Worker - no HTTP)
+[[services]]
+name = "crawler"
+
+[services.deploy]
+startCommand = "python3 crawler.py --delay 1.5"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Service 3: Daily SPLC/B-Corp Updates (Cron)
 [[services]]
 name = "scoring-updater"
 
 [services.cron]
-schedule = "0 2 * * *"  # Daily at 2 AM UTC
+schedule = "0 2 * * *"
 command = "python3 automated_updater.py"
