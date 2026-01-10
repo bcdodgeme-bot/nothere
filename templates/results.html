@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+
+{% block title %}{{ query }} - NotHere.one Search{% endblock %}
+
+{% block content %}
+<div class="results-page">
+    
+    {% if error %}
+    <!-- Error State -->
+    <div class="results-error">
+        <div class="error-icon">🦉</div>
+        <h2>{{ error }}</h2>
+        <p>Try typing something in the search box above!</p>
+    </div>
+    
+    {% elif results|length == 0 %}
+    <!-- No Results -->
+    <div class="results-empty">
+        <div class="empty-icon">🔍</div>
+        <h2>No results found for "{{ query }}"</h2>
+        <p>Suggestions:</p>
+        <ul>
+            <li>Check your spelling</li>
+            <li>Try more general keywords</li>
+            <li>Try different keywords</li>
+        </ul>
+    </div>
+    
+    {% else %}
+    <!-- Results Header -->
+    <div class="results-header">
+        <div class="results-meta">
+            <span class="results-count">
+                Found <strong>{{ total_count|format_number }}</strong> results
+            </span>
+            <span class="results-time">
+                ({{ search_time_ms / 1000 }} seconds)
+            </span>
+        </div>
+        
+        <!-- Sort Options -->
+        <div class="results-sort">
+            <label for="sort-select">Sort by:</label>
+            <select id="sort-select" class="sort-select" onchange="updateSort(this.value)">
+                <option value="relevance" {% if sort == 'relevance' %}selected{% endif %}>Relevance</option>
+                <option value="score" {% if sort == 'score' %}selected{% endif %}>Quality Score</option>
+                <option value="recent" {% if sort == 'recent' %}selected{% endif %}>Recently Added</option>
+            </select>
+        </div>
+    </div>
+    
+    <!-- Results List -->
+    <div class="results-list">
+        {% for result in results %}
+        <article class="result-item" data-page-id="{{ result.id }}">
+            <!-- Result Header -->
+            <div class="result-header">
+                <!-- Domain & Score Badge -->
+                <div class="result-domain-line">
+                    <span class="result-domain">{{ result.domain }}</span>
+                    <span class="score-badge {{ result.score_badge.class }}" title="{{ result.score_badge.label }}">
+                        {{ result.score_badge.emoji }} {{ result.final_composite_score }}
+                    </span>
+                </div>
+                
+                <!-- Title -->
+                <h2 class="result-title">
+                    <a href="{{ result.url }}" target="_blank" rel="noopener noreferrer">
+                        {{ result.title or result.url }}
+                    </a>
+                </h2>
+                
+                <!-- URL -->
+                <div class="result-url">
+                    <a href="{{ result.url }}" target="_blank" rel="noopener noreferrer">
+                        {{ result.url|truncate_url(70) }}
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Snippet -->
+            <p class="result-snippet">
+                {{ result.snippet }}{% if result.snippet|length >= 297 %}...{% endif %}
+            </p>
+            
+            <!-- Badges Row -->
+            <div class="result-badges">
+                <!-- Equity Badges -->
+                {% if result.equity_badges %}
+                <div class="equity-badges">
+                    {% for badge in result.equity_badges %}
+                    <span class="equity-badge" title="{{ badge.label }}">
+                        {{ badge.emoji }} {{ badge.label }}
+                    </span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                
+                <!-- Crawled Date -->
+                <span class="result-date" title="Added to index">
+                    {{ result.crawled_at|time_ago }}
+                </span>
+            </div>
+            
+            <!-- Media Literacy Warning -->
+            {% if result.media_literacy_warning %}
+            <div class="media-literacy-box" data-warning-id="{{ result.media_literacy_warning.id }}" data-page-id="{{ result.id }}">
+                {% if result.media_literacy_warning.warning_style == 'side_quest' %}
+                <!-- Side Quest Style -->
+                <div class="ml-prompt ml-side-quest">
+                    <div class="ml-prompt-icon">🎯</div>
+                    <div class="ml-prompt-content">
+                        <div class="ml-prompt-title">SIDE QUEST AVAILABLE</div>
+                        <div class="ml-prompt-text">This claim needs fact-checking. Ready to investigate?</div>
+                    </div>
+                    <button class="ml-prompt-btn" onclick="expandMediaLiteracy(this)">
+                        Accept Quest → <span class="ml-points">+5 Internet Points</span>
+                    </button>
+                </div>
+                {% else %}
+                <!-- Hold Up Style -->
+                <div class="ml-prompt ml-hold-up">
+                    <div class="ml-prompt-icon">🤔</div>
+                    <div class="ml-prompt-content">
+                        <div class="ml-prompt-title">HOLD UP...</div>
+                        <div class="ml-prompt-text">This claim is kinda sus. Want to see what scientists actually say?</div>
+                    </div>
+                    <button class="ml-prompt-btn" onclick="expandMediaLiteracy(this)">
+                        Show Me → <span class="ml-points">+5 Points for Being Smart</span>
+                    </button>
+                </div>
+                {% endif %}
+                
+                <!-- Expanded Content (hidden by default) -->
+                <div class="ml-expanded" style="display: none;">
+                    <div class="ml-points-awarded">
+                        <span class="ml-points-flash">🎉 +5 POINTS!</span>
+                        <span class="ml-points-total">Your Critical Thinking Score: <strong class="user-points">{{ session.total_points + 5 }}</strong> points</span>
+                    </div>
+                    
+                    <div class="ml-claim-section">
+                        <div class="ml-claim-label">❌ This source claims:</div>
+                        <div class="ml-claim-text">"{{ result.media_literacy_warning.claim_summary }}"</div>
+                    </div>
+                    
+                    <div class="ml-counter-section">
+                        <div class="ml-counter-label">✅ What the evidence shows:</div>
+                        <div class="ml-counter-text">{{ result.media_literacy_warning.counter_summary }}</div>
+                    </div>
+                    
+                    {% if result.media_literacy_warning.counter_sources %}
+                    <div class="ml-sources-section">
+                        <div class="ml-sources-label">📚 Sources:</div>
+                        <ul class="ml-sources-list">
+                            {% for source in result.media_literacy_warning.counter_sources %}
+                            <li class="ml-source-item">
+                                <strong>{{ source.name }}</strong>: {{ source.finding }}
+                                {% if source.url %}
+                                <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer" class="ml-source-link">[Link]</a>
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- Feedback Buttons -->
+            <div class="result-feedback" data-page-id="{{ result.id }}">
+                <span class="feedback-label">Was this helpful?</span>
+                <button class="feedback-btn feedback-helpful {% if result.user_feedback == 'helpful' %}active{% endif %}" 
+                        onclick="submitFeedback({{ result.id }}, 'helpful', this)"
+                        title="Mark as helpful">
+                    👍 <span class="feedback-count">{{ result.helpful_count or '' }}</span>
+                </button>
+                <button class="feedback-btn feedback-not-helpful {% if result.user_feedback == 'not_helpful' %}active{% endif %}" 
+                        onclick="submitFeedback({{ result.id }}, 'not_helpful', this)"
+                        title="Mark as not helpful">
+                    👎 <span class="feedback-count">{{ result.not_helpful_count or '' }}</span>
+                </button>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <nav class="pagination" aria-label="Search results pages">
+        <div class="pagination-container">
+            <!-- Previous -->
+            {% if page > 1 %}
+            <a href="{{ url_for('search', q=query, sort=sort, page=page-1) }}" class="pagination-btn pagination-prev">
+                ← Previous
+            </a>
+            {% else %}
+            <span class="pagination-btn pagination-prev disabled">← Previous</span>
+            {% endif %}
+            
+            <!-- Page Numbers -->
+            <div class="pagination-numbers">
+                {% set start_page = [1, page - 2]|max %}
+                {% set end_page = [total_pages, page + 2]|min %}
+                
+                {% if start_page > 1 %}
+                <a href="{{ url_for('search', q=query, sort=sort, page=1) }}" class="pagination-num">1</a>
+                {% if start_page > 2 %}
+                <span class="pagination-ellipsis">...</span>
+                {% endif %}
+                {% endif %}
+                
+                {% for p in range(start_page, end_page + 1) %}
+                {% if p == page %}
+                <span class="pagination-num current">{{ p }}</span>
+                {% else %}
+                <a href="{{ url_for('search', q=query, sort=sort, page=p) }}" class="pagination-num">{{ p }}</a>
+                {% endif %}
+                {% endfor %}
+                
+                {% if end_page < total_pages %}
+                {% if end_page < total_pages - 1 %}
+                <span class="pagination-ellipsis">...</span>
+                {% endif %}
+                <a href="{{ url_for('search', q=query, sort=sort, page=total_pages) }}" class="pagination-num">{{ total_pages }}</a>
+                {% endif %}
+            </div>
+            
+            <!-- Next -->
+            {% if page < total_pages %}
+            <a href="{{ url_for('search', q=query, sort=sort, page=page+1) }}" class="pagination-btn pagination-next">
+                Next →
+            </a>
+            {% else %}
+            <span class="pagination-btn pagination-next disabled">Next →</span>
+            {% endif %}
+        </div>
+        
+        <div class="pagination-info">
+            Page {{ page }} of {{ total_pages }}
+        </div>
+    </nav>
+    {% endif %}
+    
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Current search query (for feedback tracking)
+    const currentQuery = "{{ query|e }}";
+    
+    // Update sort order
+    function updateSort(sortValue) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('sort', sortValue);
+        url.searchParams.set('page', '1'); // Reset to page 1 on sort change
+        window.location.href = url.toString();
+    }
+    
+    // Submit feedback
+    async function submitFeedback(pageId, feedbackType, button) {
+        const feedbackContainer = button.closest('.result-feedback');
+        const helpfulBtn = feedbackContainer.querySelector('.feedback-helpful');
+        const notHelpfulBtn = feedbackContainer.querySelector('.feedback-not-helpful');
+        
+        // Optimistic UI update
+        helpfulBtn.classList.remove('active');
+        notHelpfulBtn.classList.remove('active');
+        button.classList.add('active');
+        
+        try {
+            const response = await fetch('/api/feedback', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    page_id: pageId,
+                    feedback_type: feedbackType,
+                    query: currentQuery
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Feedback failed');
+            }
+            
+            // Update count display
+            const countSpan = button.querySelector('.feedback-count');
+            if (countSpan) {
+                const currentCount = parseInt(countSpan.textContent) || 0;
+                countSpan.textContent = currentCount + 1;
+            }
+            
+        } catch (error) {
+            console.error('Feedback error:', error);
+            // Revert UI on error
+            button.classList.remove('active');
+        }
+    }
+    
+    // Expand media literacy warning and claim points
+    async function expandMediaLiteracy(button) {
+        const mlBox = button.closest('.media-literacy-box');
+        const prompt = mlBox.querySelector('.ml-prompt');
+        const expanded = mlBox.querySelector('.ml-expanded');
+        const pageId = mlBox.dataset.pageId;
+        const warningId = mlBox.dataset.warningId;
+        
+        // Hide prompt, show expanded
+        prompt.style.display = 'none';
+        expanded.style.display = 'block';
+        
+        // Add animation class
+        expanded.classList.add('ml-expanded-animate');
+        
+        // Flash effect
+        const pointsFlash = expanded.querySelector('.ml-points-flash');
+        pointsFlash.classList.add('flash');
+        
+        // Claim points via API
+        try {
+            const response = await fetch('/api/media-literacy/claim', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    page_id: pageId,
+                    warning_id: warningId
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                // Update points display in header
+                const headerPoints = document.querySelector('.points-value');
+                if (headerPoints) {
+                    headerPoints.textContent = data.total_points.toLocaleString();
+                }
+                
+                // Update the total shown in expanded box
+                const totalDisplay = expanded.querySelector('.user-points');
+                if (totalDisplay) {
+                    totalDisplay.textContent = data.total_points;
+                }
+            } else if (data.message === 'Already claimed') {
+                // Already got points for this one
+                pointsFlash.textContent = '✓ Already claimed!';
+            }
+            
+        } catch (error) {
+            console.error('Points claim error:', error);
+        }
+        
+        // Remove flash after animation
+        setTimeout(() => {
+            pointsFlash.classList.remove('flash');
+        }, 2000);
+    }
+    
+    // Keyboard navigation for results
+    document.addEventListener('keydown', function(e) {
+        // 'j' for next result, 'k' for previous (vim-style)
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        const results = document.querySelectorAll('.result-item');
+        const focused = document.querySelector('.result-item.focused');
+        let currentIndex = focused ? Array.from(results).indexOf(focused) : -1;
+        
+        if (e.key === 'j' && currentIndex < results.length - 1) {
+            if (focused) focused.classList.remove('focused');
+            results[currentIndex + 1].classList.add('focused');
+            results[currentIndex + 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (e.key === 'k' && currentIndex > 0) {
+            if (focused) focused.classList.remove('focused');
+            results[currentIndex - 1].classList.add('focused');
+            results[currentIndex - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (e.key === 'Enter' && focused) {
+            const link = focused.querySelector('.result-title a');
+            if (link) window.open(link.href, '_blank');
+        }
+    });
+</script>
+{% endblock %}

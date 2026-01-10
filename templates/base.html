@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="NotHere.one - An ethical search engine that filters harmful content and boosts diverse voices.">
+    <meta name="theme-color" content="#2A9D8F">
+    
+    <title>{% block title %}NotHere.one - Search Smarter{% endblock %}</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='owl-icon.png') }}">
+    
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Header -->
+    <header class="site-header {% block header_class %}{% endblock %}">
+        <div class="header-container">
+            <!-- Logo -->
+            <a href="{{ url_for('index') }}" class="logo-link">
+                <img src="{{ url_for('static', filename='owl-logo.png') }}" alt="NotHere.one Owl" class="logo-img">
+                <span class="logo-text">NotHere<span class="logo-dot">.one</span></span>
+            </a>
+            
+            <!-- Search box in header (not on homepage) -->
+            {% block header_search %}
+            <form action="{{ url_for('search') }}" method="GET" class="header-search-form">
+                <input 
+                    type="text" 
+                    name="q" 
+                    class="header-search-input"
+                    placeholder="Search smarter..."
+                    value="{{ query if query else '' }}"
+                    maxlength="300"
+                    autocomplete="off"
+                >
+                <button type="submit" class="header-search-btn" aria-label="Search">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                </button>
+            </form>
+            {% endblock %}
+            
+            <!-- Navigation -->
+            <nav class="header-nav">
+                <!-- Internet Points Display -->
+                <div class="points-display" title="Your Internet Points">
+                    <span class="points-icon">🧠</span>
+                    <span class="points-value">{{ session.total_points|format_number }}</span>
+                    <span class="points-label">pts</span>
+                </div>
+                
+                <!-- Nav Links -->
+                <a href="{{ url_for('leaderboard') }}" class="nav-link" title="Leaderboard">🏆</a>
+                
+                <!-- About Modal Trigger -->
+                <button class="nav-link nav-btn" id="about-btn" title="About NotHere.one">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M12 16v-4"></path>
+                        <path d="M12 8h.01"></path>
+                    </svg>
+                </button>
+            </nav>
+        </div>
+    </header>
+    
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+    
+    <!-- Footer -->
+    <footer class="site-footer">
+        <div class="footer-container">
+            <div class="footer-links">
+                <a href="{{ url_for('privacy') }}">Privacy Policy</a>
+                <span class="footer-divider">•</span>
+                <a href="{{ url_for('leaderboard') }}">Leaderboard</a>
+                <span class="footer-divider">•</span>
+                <button class="footer-link-btn" id="about-btn-footer">About</button>
+            </div>
+            <p class="footer-tagline">
+                Search with values. Built with ❤️ for families, educators, and seekers of truth.
+            </p>
+            <p class="footer-copyright">
+                © 2025 NotHere.one. An algorithm of justice.
+            </p>
+        </div>
+    </footer>
+    
+    <!-- About Modal -->
+    <div class="modal-overlay" id="about-modal">
+        <div class="modal-content">
+            <button class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+            
+            <div class="modal-header">
+                <img src="{{ url_for('static', filename='owl-logo.png') }}" alt="NotHere.one Owl" class="modal-logo">
+                <h2>About NotHere.one</h2>
+            </div>
+            
+            <div class="modal-body">
+                <h3>🔍 What is NotHere.one?</h3>
+                <p>
+                    NotHere.one is an ethical search engine — an "algorithm of justice" designed to 
+                    filter harmful content while amplifying diverse and trustworthy voices.
+                </p>
+                
+                <h3>🛡️ What We Filter Out</h3>
+                <ul>
+                    <li>Hate groups flagged by SPLC and civil rights organizations</li>
+                    <li>Misinformation and conspiracy content</li>
+                    <li>Adult content, gambling, and predatory lending</li>
+                    <li>MLM schemes and content farms</li>
+                </ul>
+                
+                <h3>✊ What We Boost</h3>
+                <ul>
+                    <li>Minority-owned businesses</li>
+                    <li>Women-owned businesses</li>
+                    <li>Veteran-owned businesses</li>
+                    <li>LGBTQ+-owned businesses</li>
+                    <li>Disability-owned businesses</li>
+                    <li>B-Corp certified companies</li>
+                </ul>
+                
+                <h3>🧠 Internet Points</h3>
+                <p>
+                    When you engage with our media literacy features — fact-checking claims and 
+                    exploring counter-evidence — you earn Internet Points! It's our way of 
+                    rewarding critical thinking.
+                </p>
+                
+                <h3>🔒 Your Privacy</h3>
+                <p>
+                    We don't track you. No accounts required. No ads. No selling your data.
+                    <a href="{{ url_for('privacy') }}">Read our full privacy policy →</a>
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Base JavaScript -->
+    <script>
+        // Modal functionality
+        const modal = document.getElementById('about-modal');
+        const aboutBtn = document.getElementById('about-btn');
+        const aboutBtnFooter = document.getElementById('about-btn-footer');
+        const closeBtn = document.getElementById('modal-close');
+        
+        function openModal() {
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeModal() {
+            modal.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+        
+        aboutBtn.addEventListener('click', openModal);
+        aboutBtnFooter.addEventListener('click', openModal);
+        closeBtn.addEventListener('click', closeModal);
+        
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal.classList.contains('active')) {
+                closeModal();
+            }
+        });
+    </script>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>
