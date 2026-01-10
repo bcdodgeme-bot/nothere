@@ -1,6 +1,7 @@
 """
 NotHere.one Web Crawler
 Production-ready crawler with Tier 1 filtering
+IMMORTAL MODE: Runs forever, re-seeds when queue empties
 """
 
 import os
@@ -26,14 +27,18 @@ from composite_scorer import CompositeScorer
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout  # ← Add this line!
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
+
+# How long to wait when queue is empty before re-seeding (in minutes)
+RESEED_WAIT_MINUTES = 10
 
 
 class Crawler:
     """
     Web crawler with built-in Tier 1 filtering
+    Runs indefinitely - re-seeds when queue empties
     """
     
     def __init__(self, redis_manager, db_conn, politeness_delay=1.0):
@@ -60,7 +65,8 @@ class Crawler:
             'pages_scored': 0,
             'pages_score_failed': 0,
             'links_found': 0,
-            'urls_queued': 0
+            'urls_queued': 0,
+            'reseeds': 0
         }
     
     def normalize_url(self, url):
@@ -396,15 +402,38 @@ class Crawler:
         
         logger.info(f"✅ Crawled successfully: {final_url} ({len(extracted['links'])} links found)")
     
+    def reseed_queue(self):
+        """Re-seed the queue from seed_urls.txt"""
+        try:
+            seed_urls = load_seed_urls('seed_urls.txt')
+            queued_count = 0
+            
+            for url in seed_urls:
+                if self.queue_url(url):
+                    queued_count += 1
+            
+            self.stats['reseeds'] += 1
+            logger.info(f"🌱 Re-seeded queue with {queued_count} new URLs (reseed #{self.stats['reseeds']})")
+            return queued_count
+            
+        except Exception as e:
+            logger.error(f"Failed to reseed: {e}")
+            return 0
+    
     def crawl(self, max_pages=None):
-        """Main crawl loop"""
-        logger.info(f"Starting crawler (max_pages={max_pages})")
+        """
+        Main crawl loop - IMMORTAL MODE
+        Runs forever, re-seeding when queue empties
+        """
+        logger.info(f"Starting crawler in IMMORTAL MODE (max_pages={max_pages})")
+        logger.info(f"Will wait {RESEED_WAIT_MINUTES} minutes and reseed when queue empties")
         
         pages_crawled = 0
+        consecutive_empty = 0
         
         try:
             while True:
-                # Check if we've hit the limit
+                # Check if we've hit the limit (only if max_pages is set)
                 if max_pages and pages_crawled >= max_pages:
                     logger.info(f"Reached max_pages limit: {max_pages}")
                     break
@@ -413,8 +442,31 @@ class Crawler:
                 url = self.redis.dequeue_url()
                 
                 if url is None:
-                    logger.info("Queue is empty")
-                    break
+                    consecutive_empty += 1
+                    
+                    # Print stats before waiting
+                    self.print_stats()
+                    
+                    logger.info(f"📭 Queue is empty (attempt {consecutive_empty})")
+                    logger.info(f"⏳ Waiting {RESEED_WAIT_MINUTES} minutes before re-seeding...")
+                    
+                    # Wait before re-seeding
+                    time.sleep(RESEED_WAIT_MINUTES * 60)
+                    
+                    # Try to re-seed
+                    new_urls = self.reseed_queue()
+                    
+                    if new_urls == 0:
+                        # If reseed found nothing new, wait longer next time
+                        logger.info("No new URLs from reseed, will try again...")
+                        # But don't exit - keep trying!
+                    else:
+                        consecutive_empty = 0  # Reset counter
+                    
+                    continue  # Go back to top of loop
+                
+                # Reset empty counter when we have URLs
+                consecutive_empty = 0
                 
                 # Crawl the URL
                 self.crawl_url(url)
@@ -443,6 +495,8 @@ class Crawler:
         logger.info(f"Pages failed:      {self.stats['pages_failed']}")
         logger.info(f"Links found:       {self.stats['links_found']}")
         logger.info(f"URLs queued:       {self.stats['urls_queued']}")
+        logger.info(f"Queue reseeds:     {self.stats['reseeds']}")
+        logger.info(f"Current queue:     {self.redis.queue_size()}")
         logger.info("="*60 + "\n")
 
 
@@ -459,9 +513,9 @@ def load_seed_urls(seed_file):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='NotHere.one Web Crawler')
+    parser = argparse.ArgumentParser(description='NotHere.one Web Crawler - IMMORTAL MODE')
     parser.add_argument('--seed', type=str, help='Seed URLs file')
-    parser.add_argument('--max-pages', type=int, help='Maximum pages to crawl')
+    parser.add_argument('--max-pages', type=int, help='Maximum pages to crawl (omit for infinite)')
     parser.add_argument('--delay', type=float, default=1.0, help='Politeness delay in seconds (default: 1.0)')
     
     args = parser.parse_args()
@@ -474,7 +528,7 @@ def main():
         logger.error(f"Failed to connect to database: {e}")
         sys.exit(1)
     
-    # Import RedisManager (assuming it's in the same directory or in PYTHONPATH)
+    # Import RedisManager
     try:
         from redis_manager import RedisManager
         redis_manager = RedisManager()
@@ -508,18 +562,6 @@ def main():
         except Exception as e:
             logger.warning(f"Could not auto-seed URLs: {e}")
     
-    # Create crawler
-    # Auto-seed if queue is empty and no seed file provided
-    if not args.seed and redis_manager.queue_size() == 0:
-        logger.info("Queue is empty, loading default seeds...")
-        try:
-            seed_urls = load_seed_urls('seed_urls.txt')
-            for url in seed_urls:
-                redis_manager.enqueue_url(url)
-            logger.info(f"✅ Auto-seeded {len(seed_urls)} URLs")
-        except Exception as e:
-            logger.warning(f"Could not auto-seed URLs: {e}")
-    
     crawler = Crawler(
         redis_manager=redis_manager,
         db_conn=db_conn,
@@ -531,10 +573,10 @@ def main():
     logger.info(f"Tier 1 Blocklist loaded: {stats['blocked_domains']} domains, "
                 f"{stats['blocked_tlds']} TLDs, {stats['blocked_patterns']} patterns")
     
-    # Start crawling
+    # Start crawling (runs forever unless max_pages set)
     crawler.crawl(max_pages=args.max_pages)
     
-    # Cleanup
+    # Cleanup (only reached if max_pages limit hit)
     db_conn.close()
     logger.info("Database connection closed")
 
