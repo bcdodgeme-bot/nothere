@@ -146,14 +146,34 @@ class Crawler:
                 # Key exists but value is None (robots.txt couldn't be read)
                 return True
             else:
-                # Not in cache, fetch robots.txt
+                # Not in cache, fetch robots.txt WITH TIMEOUT
+                # Using requests instead of rp.read() which has no timeout
                 robots_url = urljoin(base_url, '/robots.txt')
                 rp = RobotFileParser()
                 rp.set_url(robots_url)
                 
                 try:
-                    rp.read()
-                    self.robots_cache.set(base_url, rp)
+                    # Fetch robots.txt with 5 minute timeout
+                    response = requests.get(
+                        robots_url,
+                        headers=self.headers,
+                        timeout=300  # 5 minutes
+                    )
+                    
+                    if response.status_code == 200:
+                        # Parse the robots.txt content
+                        rp.parse(response.text.splitlines())
+                        self.robots_cache.set(base_url, rp)
+                    else:
+                        # No robots.txt or error - allow crawling
+                        logger.debug(f"robots.txt returned {response.status_code} for {base_url}")
+                        self.robots_cache.set(base_url, None)
+                        return True
+                        
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Timeout fetching robots.txt for {base_url} (5 min limit)")
+                    self.robots_cache.set(base_url, None)
+                    return True
                 except Exception as e:
                     logger.debug(f"Could not read robots.txt for {base_url}: {e}")
                     # If robots.txt doesn't exist or can't be read, allow crawling
