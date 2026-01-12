@@ -1,6 +1,8 @@
 """
 NotHere.one Composite Scoring System
 =====================================
+MEMORY OPTIMIZED: Bounded LRU caches to prevent OOM
+
 Evaluates crawled pages across 5 dimensions:
 1. Islamic Alignment (-100 to +100, normalized to 0-100) - 30% weight
 2. Quality Score (0-100) - 25% weight
@@ -21,7 +23,7 @@ import re
 import logging
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import json
 
 # Optional dependencies (graceful degradation)
@@ -34,11 +36,40 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Cache size limits to prevent OOM
+MAX_CACHE_SIZE = 500
+
+
+class LRUCache(OrderedDict):
+    """Simple LRU cache using OrderedDict"""
+    
+    def __init__(self, max_size=500):
+        super().__init__()
+        self.max_size = max_size
+    
+    def get(self, key, default=None):
+        if key in self:
+            self.move_to_end(key)
+            return self[key]
+        return default
+    
+    def set(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        self[key] = value
+        if len(self) > self.max_size:
+            oldest = next(iter(self))
+            del self[oldest]
+    
+    def __contains__(self, key):
+        return OrderedDict.__contains__(self, key)
+
 
 class CompositeScorer:
     """
     Unified scoring system for NotHere.one
     Evaluates pages across all dimensions and outputs 0-100 score
+    MEMORY OPTIMIZED with bounded LRU caches
     """
     
     def __init__(self, db_conn):
@@ -50,11 +81,13 @@ class CompositeScorer:
         """
         self.db_conn = db_conn
         
-        # Caches for performance
+        # Keyword cache - loaded once, not per-domain (OK to keep unbounded)
         self._keyword_cache = None
-        self._domain_authority_cache = {}
-        self._equity_cache = {}
-        self._blocklist_cache = {}
+        
+        # MEMORY FIX: Use LRU caches instead of unbounded dicts
+        self._domain_authority_cache = LRUCache(max_size=MAX_CACHE_SIZE)
+        self._equity_cache = LRUCache(max_size=MAX_CACHE_SIZE)
+        self._blocklist_cache = LRUCache(max_size=MAX_CACHE_SIZE)
         
         # Category weights for Islamic alignment
         self.category_weights = {
@@ -77,7 +110,20 @@ class CompositeScorer:
             r'\bthe\s+intercept\b',   # News outlet
         ]
         
-        logger.info("CompositeScorer initialized")
+        logger.info("CompositeScorer initialized (memory optimized)")
+    
+    def clear_caches(self):
+        """Clear all domain caches to free memory"""
+        self._domain_authority_cache.clear()
+        self._equity_cache.clear()
+        self._blocklist_cache.clear()
+        logger.info("Scorer caches cleared")
+    
+    def get_cache_stats(self):
+        """Get current cache sizes for monitoring"""
+        return (f"authority={len(self._domain_authority_cache)}, "
+                f"equity={len(self._equity_cache)}, "
+                f"blocklist={len(self._blocklist_cache)}")
     
     # ========================================================================
     # ISLAMIC ALIGNMENT SCORING
@@ -472,7 +518,7 @@ class CompositeScorer:
             """, (url,))
             
             result = cursor.fetchone()
-            backlink_count = result[0] if result else 0
+            backlink_count = result[0] if result and result[0] else 0
             
             # Score based on backlink count
             if backlink_count == 0:
@@ -502,10 +548,11 @@ class CompositeScorer:
                 FROM links l
                 JOIN pages p ON l.source_page_id = p.id
                 WHERE l.target_url = %s
-                    AND p.domain LIKE '%.edu'
+                    AND p.domain LIKE '%%.edu'
             """, (url,))
             
-            edu_refs = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            edu_refs = result[0] if result and result[0] else 0
             if edu_refs > 0:
                 score += 10
             
@@ -515,10 +562,11 @@ class CompositeScorer:
                 FROM links l
                 JOIN pages p ON l.source_page_id = p.id
                 WHERE l.target_url = %s
-                    AND p.domain LIKE '%.gov'
+                    AND p.domain LIKE '%%.gov'
             """, (url,))
             
-            gov_refs = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            gov_refs = result[0] if result and result[0] else 0
             if gov_refs > 0:
                 score += 10
             
@@ -542,10 +590,10 @@ class CompositeScorer:
         Returns:
             tuple: (score: int, details: dict)
         """
-        # Check cache
+        # Check LRU cache
         cache_key = domain
-        if cache_key in self._domain_authority_cache:
-            cached = self._domain_authority_cache[cache_key]
+        cached = self._domain_authority_cache.get(cache_key)
+        if cached is not None:
             # Cache for 7 days
             if (datetime.now() - cached['timestamp']).days < 7:
                 return cached['score'], cached['details']
@@ -567,12 +615,12 @@ class CompositeScorer:
         total = tld_score + backlink_score + external_score
         details['total'] = total
         
-        # Cache result
-        self._domain_authority_cache[cache_key] = {
+        # Cache result using LRU cache
+        self._domain_authority_cache.set(cache_key, {
             'score': total,
             'details': details,
             'timestamp': datetime.now()
-        }
+        })
         
         logger.debug(f"Authority score: {total} (TLD={tld_score}, backlinks={backlink_score})")
         
@@ -601,9 +649,10 @@ class CompositeScorer:
         parsed = urlparse(domain if '://' in domain else f'https://{domain}')
         domain_clean = parsed.netloc.lower().replace('www.', '')
         
-        # Check cache
-        if domain_clean in self._equity_cache:
-            return self._equity_cache[domain_clean]
+        # Check LRU cache
+        cached = self._equity_cache.get(domain_clean)
+        if cached is not None:
+            return cached
         
         cursor = self.db_conn.cursor()
         try:
@@ -616,7 +665,7 @@ class CompositeScorer:
             
             result = cursor.fetchone()
             if not result:
-                self._equity_cache[domain_clean] = (0, {'reason': 'not_in_equity_list'})
+                self._equity_cache.set(domain_clean, (0, {'reason': 'not_in_equity_list'}))
                 return 0, {'reason': 'not_in_equity_list'}
             
             minority, women, veteran, bcorp, lgbtq, disability = result
@@ -647,13 +696,13 @@ class CompositeScorer:
             boost = min(30, boost)
             details['total_boost'] = boost
             
-            result = (boost, details)
-            self._equity_cache[domain_clean] = result
+            cache_value = (boost, details)
+            self._equity_cache.set(domain_clean, cache_value)
             
             if boost > 0:
                 logger.info(f"Equity boost: +{boost} points for {domain_clean}")
             
-            return result
+            return cache_value
             
         except Exception as e:
             logger.error(f"Error checking equity domains: {e}")
@@ -675,9 +724,10 @@ class CompositeScorer:
         parsed = urlparse(domain if '://' in domain else f'https://{domain}')
         domain_clean = parsed.netloc.lower().replace('www.', '')
         
-        # Check cache
-        if domain_clean in self._blocklist_cache:
-            return self._blocklist_cache[domain_clean]
+        # Check LRU cache
+        cached = self._blocklist_cache.get(domain_clean)
+        if cached is not None:
+            return cached
         
         cursor = self.db_conn.cursor()
         try:
@@ -690,7 +740,7 @@ class CompositeScorer:
             
             result = cursor.fetchone()
             if not result:
-                self._blocklist_cache[domain_clean] = (False, None)
+                self._blocklist_cache.set(domain_clean, (False, None))
                 return False, None
             
             splc, aclu, cair, adl, other, reason = result
@@ -707,13 +757,13 @@ class CompositeScorer:
                 if reason:
                     block_reason += f" - {reason}"
                 
-                result = (True, block_reason)
-                self._blocklist_cache[domain_clean] = result
+                cache_value = (True, block_reason)
+                self._blocklist_cache.set(domain_clean, cache_value)
                 
                 logger.warning(f"Domain blocked: {domain_clean} - {block_reason}")
-                return result
+                return cache_value
             
-            self._blocklist_cache[domain_clean] = (False, None)
+            self._blocklist_cache.set(domain_clean, (False, None))
             return False, None
             
         except Exception as e:
@@ -723,7 +773,7 @@ class CompositeScorer:
             cursor.close()
     
     # ========================================================================
-    # MEDIA LITERACY (STUB)
+    # MEDIA LITERACY
     # ========================================================================
     
     def calculate_media_literacy_score(self, content, domain, title=None):
@@ -1081,7 +1131,7 @@ if __name__ == '__main__':
     # Get database connection
     database_url = os.getenv('DATABASE_URL')
     if not database_url:
-        print("âŒ ERROR: DATABASE_URL not set")
+        print("❌ ERROR: DATABASE_URL not set")
         exit(1)
     
     if database_url.startswith('postgres://'):
@@ -1090,7 +1140,7 @@ if __name__ == '__main__':
     conn = psycopg2.connect(database_url)
     
     print("="*60)
-    print("COMPOSITE SCORER TEST")
+    print("COMPOSITE SCORER TEST (Memory Optimized)")
     print("="*60)
     
     # Test scoring a few pages
@@ -1107,15 +1157,19 @@ if __name__ == '__main__':
     
     print(f"\nScoring {len(test_pages)} test pages...\n")
     
+    scorer = CompositeScorer(conn)
+    
     for page_id, url, domain in test_pages:
         try:
             score = score_page_by_id(conn, page_id)
-            print(f"âœ… {domain}: {score}/100")
+            print(f"✅ {domain}: {score}/100")
         except Exception as e:
-            print(f"âŒ {domain}: Error - {e}")
+            print(f"❌ {domain}: Error - {e}")
+    
+    print(f"\nCache stats: {scorer.get_cache_stats()}")
     
     conn.close()
     
     print("\n" + "="*60)
-    print("âœ… Test complete")
+    print("✅ Test complete")
     print("="*60)

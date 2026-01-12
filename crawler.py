@@ -2,6 +2,7 @@
 NotHere.one Web Crawler
 Production-ready crawler with Tier 1 filtering
 IMMORTAL MODE: Runs forever, re-seeds when queue empties
+MEMORY OPTIMIZED: Bounded caches to prevent OOM
 """
 
 import os
@@ -13,6 +14,7 @@ from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 from datetime import datetime, UTC
 import hashlib
+from collections import OrderedDict
 
 import requests
 from bs4 import BeautifulSoup
@@ -34,11 +36,40 @@ logger = logging.getLogger(__name__)
 # How long to wait when queue is empty before re-seeding (in minutes)
 RESEED_WAIT_MINUTES = 10
 
+# Cache size limits to prevent OOM
+MAX_ROBOTS_CACHE_SIZE = 500
+
+
+class LRUCache(OrderedDict):
+    """Simple LRU cache using OrderedDict"""
+    
+    def __init__(self, max_size=500):
+        super().__init__()
+        self.max_size = max_size
+    
+    def get(self, key, default=None):
+        if key in self:
+            self.move_to_end(key)
+            return self[key]
+        return default
+    
+    def set(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        self[key] = value
+        if len(self) > self.max_size:
+            oldest = next(iter(self))
+            del self[oldest]
+    
+    def __contains__(self, key):
+        return OrderedDict.__contains__(self, key)
+
 
 class Crawler:
     """
     Web crawler with built-in Tier 1 filtering
     Runs indefinitely - re-seeds when queue empties
+    Memory optimized with bounded caches
     """
     
     def __init__(self, redis_manager, db_conn, politeness_delay=1.0):
@@ -46,7 +77,9 @@ class Crawler:
         self.db_conn = db_conn
         self.blocklist = get_blocklist()
         self.politeness_delay = politeness_delay
-        self.robots_cache = {}  # Cache robots.txt parsers
+        
+        # MEMORY FIX: Use LRU cache instead of unbounded dict
+        self.robots_cache = LRUCache(max_size=MAX_ROBOTS_CACHE_SIZE)
         
         # Initialize composite scorer
         self.scorer = CompositeScorer(db_conn)
@@ -66,7 +99,8 @@ class Crawler:
             'pages_score_failed': 0,
             'links_found': 0,
             'urls_queued': 0,
-            'reseeds': 0
+            'reseeds': 0,
+            'cache_clears': 0
         }
     
     def normalize_url(self, url):
@@ -104,21 +138,28 @@ class Crawler:
             parsed = urlparse(url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
             
-            # Check cache
-            if base_url not in self.robots_cache:
+            # Check LRU cache
+            cached = self.robots_cache.get(base_url)
+            if cached is not None:
+                rp = cached
+            elif base_url in self.robots_cache:
+                # Key exists but value is None (robots.txt couldn't be read)
+                return True
+            else:
+                # Not in cache, fetch robots.txt
                 robots_url = urljoin(base_url, '/robots.txt')
                 rp = RobotFileParser()
                 rp.set_url(robots_url)
                 
                 try:
                     rp.read()
-                    self.robots_cache[base_url] = rp
+                    self.robots_cache.set(base_url, rp)
                 except Exception as e:
                     logger.debug(f"Could not read robots.txt for {base_url}: {e}")
                     # If robots.txt doesn't exist or can't be read, allow crawling
-                    self.robots_cache[base_url] = None
+                    self.robots_cache.set(base_url, None)
+                    return True
             
-            rp = self.robots_cache[base_url]
             if rp is None:
                 return True
             
@@ -420,6 +461,12 @@ class Crawler:
             logger.error(f"Failed to reseed: {e}")
             return 0
     
+    def clear_caches(self):
+        """Clear scorer caches to free memory"""
+        self.scorer.clear_caches()
+        self.stats['cache_clears'] += 1
+        logger.info(f"🧹 Cleared scorer caches (clear #{self.stats['cache_clears']})")
+    
     def crawl(self, max_pages=None):
         """
         Main crawl loop - IMMORTAL MODE
@@ -427,6 +474,7 @@ class Crawler:
         """
         logger.info(f"Starting crawler in IMMORTAL MODE (max_pages={max_pages})")
         logger.info(f"Will wait {RESEED_WAIT_MINUTES} minutes and reseed when queue empties")
+        logger.info(f"Memory optimization: robots_cache max={MAX_ROBOTS_CACHE_SIZE}, scorer caches max=500")
         
         pages_crawled = 0
         consecutive_empty = 0
@@ -472,9 +520,13 @@ class Crawler:
                 self.crawl_url(url)
                 pages_crawled += 1
                 
-                # Print progress every 10 pages
-                if pages_crawled % 10 == 0:
+                # Print progress every 100 pages
+                if pages_crawled % 100 == 0:
                     self.print_stats()
+                
+                # MEMORY FIX: Clear scorer caches every 500 pages
+                if pages_crawled % 500 == 0:
+                    self.clear_caches()
         
         except KeyboardInterrupt:
             logger.info("\nCrawl interrupted by user")
@@ -496,7 +548,10 @@ class Crawler:
         logger.info(f"Links found:       {self.stats['links_found']}")
         logger.info(f"URLs queued:       {self.stats['urls_queued']}")
         logger.info(f"Queue reseeds:     {self.stats['reseeds']}")
+        logger.info(f"Cache clears:      {self.stats['cache_clears']}")
         logger.info(f"Current queue:     {self.redis.queue_size()}")
+        logger.info(f"Robots cache size: {len(self.robots_cache)}/{MAX_ROBOTS_CACHE_SIZE}")
+        logger.info(f"Scorer cache size: {self.scorer.get_cache_stats()}")
         logger.info("="*60 + "\n")
 
 
