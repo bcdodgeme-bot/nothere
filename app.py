@@ -19,7 +19,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import requests
 from flask import (
-    Flask, render_template, request, jsonify, 
+    Flask, render_template, request, jsonify,
     make_response, redirect, url_for, g
 )
 
@@ -96,7 +96,7 @@ def execute_db(query, args=()):
     cursor.close()
 
 # ============================================================================
-# SESSION MANAGEMENT
+# SESSION MANAGEMENT (Cookie-based for web)
 # ============================================================================
 
 def get_or_create_session():
@@ -143,6 +143,70 @@ def set_session_cookie(response, session_id):
         samesite='Lax'
     )
     return response
+
+# ============================================================================
+# === NEW FOR iOS API === SESSION MANAGEMENT (Device-based for mobile)
+# ============================================================================
+
+def get_or_create_session_by_device(device_id):
+    """
+    Get existing session by device_id or create new one (for mobile apps)
+    
+    Args:
+        device_id: Unique device identifier from iOS (e.g., identifierForVendor)
+    
+    Returns:
+        dict with session info
+    """
+    if not device_id:
+        return None
+    
+    # Check if session exists for this device
+    session = query_db(
+        "SELECT * FROM user_sessions WHERE device_id = %s",
+        (device_id,),
+        one=True
+    )
+    
+    if session:
+        # Update last active
+        execute_db(
+            "UPDATE user_sessions SET last_active = NOW() WHERE device_id = %s",
+            (device_id,)
+        )
+        return dict(session)
+    
+    # Create new session for this device
+    session_id = str(uuid.uuid4())
+    execute_db(
+        """INSERT INTO user_sessions (session_id, device_id, total_points, quests_completed, created_at, last_active)
+           VALUES (%s, %s, 0, 0, NOW(), NOW())""",
+        (session_id, device_id)
+    )
+    
+    return {
+        'session_id': session_id,
+        'device_id': device_id,
+        'total_points': 0,
+        'quests_completed': 0,
+        'is_new': True
+    }
+
+def get_user_rank(total_points):
+    """Get user's rank based on their points"""
+    if total_points <= 0:
+        return None
+    
+    rank_result = query_db(
+        """
+        SELECT COUNT(*) + 1 as rank
+        FROM user_sessions
+        WHERE total_points > %s
+        """,
+        (total_points,),
+        one=True
+    )
+    return rank_result['rank'] if rank_result else None
 
 # ============================================================================
 # SEARCH FUNCTIONS
@@ -204,6 +268,10 @@ def search_pages(query, sort='relevance', page=1):
                 p.title,
                 LEFT(p.content, 300) as snippet,
                 p.final_composite_score,
+                p.islamic_alignment_score,
+                p.quality_score,
+                p.authority_score,
+                p.media_literacy_score,
                 p.equity_boost,
                 p.crawled_at,
                 similarity(p.title, %s) as title_sim,
@@ -243,6 +311,10 @@ def search_pages(query, sort='relevance', page=1):
                 p.title,
                 LEFT(p.content, 300) as snippet,
                 p.final_composite_score,
+                p.islamic_alignment_score,
+                p.quality_score,
+                p.authority_score,
+                p.media_literacy_score,
                 p.equity_boost,
                 p.crawled_at,
                 similarity(p.title, %s) as title_sim,
@@ -281,7 +353,7 @@ def search_pages(query, sort='relevance', page=1):
         execute_db(
             """INSERT INTO search_logs (query, results_count, top_result_score, search_time_ms, sort_type, page_number)
                VALUES (%s, %s, %s, %s, %s, %s)""",
-            (query, total_count, 
+            (query, total_count,
              results[0]['final_composite_score'] if results else None,
              search_time_ms, sort, page)
         )
@@ -321,6 +393,117 @@ def get_equity_badges(result):
     if result.get('disability_owned'):
         badges.append({'emoji': '♿', 'label': 'Disability-Owned'})
     return badges
+
+# ============================================================================
+# === NEW FOR iOS API === PAGE DETAILS WITH SCORE BREAKDOWN
+# ============================================================================
+
+def get_page_with_scores(page_id):
+    """
+    Get full page details including 5-tier score breakdown
+    
+    Args:
+        page_id: Database page ID
+    
+    Returns:
+        dict with page info and all scoring components
+    """
+    result = query_db(
+        """
+        SELECT 
+            p.id,
+            p.url,
+            p.domain,
+            p.title,
+            LEFT(p.content, 500) as snippet,
+            p.final_composite_score,
+            p.islamic_alignment_score,
+            p.quality_score,
+            p.authority_score,
+            p.media_literacy_score,
+            p.equity_boost,
+            p.indexable,
+            p.crawled_at,
+            p.scored_at,
+            ed.minority_owned,
+            ed.women_owned,
+            ed.veteran_owned,
+            ed.b_corp,
+            ed.lgbtq_owned,
+            ed.disability_owned,
+            COALESCE(pfs.helpful_count, 0) as helpful_count,
+            COALESCE(pfs.not_helpful_count, 0) as not_helpful_count
+        FROM pages p
+        LEFT JOIN equity_domains ed ON p.domain = ed.domain
+        LEFT JOIN page_feedback_summary pfs ON p.id = pfs.page_id
+        WHERE p.id = %s
+        """,
+        (page_id,),
+        one=True
+    )
+    
+    if not result:
+        return None
+    
+    page = dict(result)
+    
+    # Add score breakdown with weights
+    page['score_breakdown'] = {
+        'islamic_alignment': {
+            'score': page.get('islamic_alignment_score') or 0,
+            'weight': 0.30,
+            'weighted_score': ((page.get('islamic_alignment_score') or 0) + 100) / 2 * 0.30,
+            'description': 'Alignment with Islamic values and principles'
+        },
+        'quality': {
+            'score': page.get('quality_score') or 0,
+            'weight': 0.25,
+            'weighted_score': (page.get('quality_score') or 0) * 0.25,
+            'description': 'Content quality, readability, and structure'
+        },
+        'authority': {
+            'score': page.get('authority_score') or 0,
+            'weight': 0.20,
+            'weighted_score': (page.get('authority_score') or 0) * 0.20,
+            'description': 'Domain authority and trustworthiness'
+        },
+        'media_literacy': {
+            'score': page.get('media_literacy_score') or 50,
+            'weight': 0.15,
+            'weighted_score': (page.get('media_literacy_score') or 50) * 0.15,
+            'description': 'Factual accuracy and source credibility'
+        },
+        'equity_boost': {
+            'score': page.get('equity_boost') or 0,
+            'weight': 0.10,
+            'weighted_score': (page.get('equity_boost') or 0) * 0.10,
+            'description': 'Bonus for diverse and ethical businesses'
+        }
+    }
+    
+    # Add badges
+    page['score_badge'] = get_score_badge(page['final_composite_score'] or 0)
+    page['equity_badges'] = get_equity_badges(page)
+    
+    # Check for media literacy warning
+    warning = query_db(
+        "SELECT * FROM media_literacy_warnings WHERE page_id = %s AND has_warning = true",
+        (page_id,),
+        one=True
+    )
+    if warning:
+        page['media_literacy_warning'] = dict(warning)
+        # Parse counter_sources if it's a JSON string
+        if page['media_literacy_warning'].get('counter_sources'):
+            try:
+                if isinstance(page['media_literacy_warning']['counter_sources'], str):
+                    page['media_literacy_warning']['counter_sources'] = json.loads(
+                        page['media_literacy_warning']['counter_sources']
+                    )
+            except:
+                pass
+    
+    return page
 
 # ============================================================================
 # MEDIA LITERACY FUNCTIONS
@@ -463,7 +646,7 @@ If the page is factual and not misleading, set has_disputed_claims to false."""
                    counter_summary = EXCLUDED.counter_summary,
                    counter_sources = EXCLUDED.counter_sources,
                    checked_at = NOW()""",
-            (page_id, warning_style, 
+            (page_id, warning_style,
              ai_data.get('claim_summary', ''),
              ai_data.get('counter_summary', ''),
              json.dumps(ai_data.get('counter_sources', [])),
@@ -522,7 +705,7 @@ def get_leaderboard(limit=10):
     return [dict(r) for r in results]
 
 # ============================================================================
-# ROUTES - PAGES
+# ROUTES - PAGES (Web HTML)
 # ============================================================================
 
 @app.route('/')
@@ -587,9 +770,9 @@ def search():
         triggers = check_media_literacy_triggers(f"{result['title']} {result['snippet']}")
         if triggers:
             warning = get_or_create_media_literacy_warning(
-                result['id'], 
-                result['title'], 
-                result['snippet'], 
+                result['id'],
+                result['title'],
+                result['snippet'],
                 result['domain']
             )
             result['media_literacy_warning'] = warning
@@ -656,7 +839,7 @@ def leaderboard():
     return set_session_cookie(response, session['session_id'])
 
 # ============================================================================
-# ROUTES - API ENDPOINTS
+# ROUTES - API ENDPOINTS (Legacy Web)
 # ============================================================================
 
 @app.route('/api/feedback', methods=['POST'])
@@ -760,17 +943,412 @@ def api_stats():
     return jsonify(stats)
 
 # ============================================================================
+# === NEW FOR iOS API === MOBILE API v1 ENDPOINTS
+# ============================================================================
+
+@app.route('/api/v1/search', methods=['GET'])
+def api_v1_search():
+    """
+    JSON search results for mobile app
+    
+    Query params:
+        q: Search query (required)
+        sort: 'relevance' | 'score' | 'recent' (default: relevance)
+        page: Page number (default: 1)
+    
+    Returns:
+        JSON with results, pagination info, and timing
+    """
+    query = request.args.get('q', '').strip()
+    sort = request.args.get('sort', 'relevance')
+    page = request.args.get('page', 1, type=int)
+    
+    # Validate
+    if not query:
+        return jsonify({
+            'error': 'Missing search query',
+            'message': 'Please provide a search query using the q parameter'
+        }), 400
+    
+    if len(query) > MAX_QUERY_LENGTH:
+        query = query[:MAX_QUERY_LENGTH]
+    
+    if sort not in ['relevance', 'score', 'recent']:
+        sort = 'relevance'
+    
+    if page < 1:
+        page = 1
+    
+    # Perform search
+    search_results = search_pages(query, sort, page)
+    
+    # Process results for API response
+    api_results = []
+    for result in search_results['results']:
+        # Add badges
+        result['score_badge'] = get_score_badge(result['final_composite_score'])
+        result['equity_badges'] = get_equity_badges(result)
+        
+        # Add score breakdown
+        result['score_breakdown'] = {
+            'islamic_alignment': result.get('islamic_alignment_score') or 0,
+            'quality': result.get('quality_score') or 0,
+            'authority': result.get('authority_score') or 0,
+            'media_literacy': result.get('media_literacy_score') or 50,
+            'equity_boost': result.get('equity_boost') or 0,
+            'final': result.get('final_composite_score') or 0
+        }
+        
+        # Check media literacy
+        triggers = check_media_literacy_triggers(f"{result['title']} {result['snippet']}")
+        if triggers:
+            warning = get_or_create_media_literacy_warning(
+                result['id'],
+                result['title'],
+                result['snippet'],
+                result['domain']
+            )
+            if warning:
+                # Parse counter_sources if JSON string
+                if warning.get('counter_sources') and isinstance(warning['counter_sources'], str):
+                    try:
+                        warning['counter_sources'] = json.loads(warning['counter_sources'])
+                    except:
+                        pass
+                result['media_literacy_warning'] = warning
+        
+        # Convert datetime to ISO string for JSON
+        if result.get('crawled_at'):
+            result['crawled_at'] = result['crawled_at'].isoformat()
+        
+        api_results.append(result)
+    
+    return jsonify({
+        'query': query,
+        'sort': sort,
+        'results': api_results,
+        'total_count': search_results['total_count'],
+        'page': search_results['page'],
+        'total_pages': search_results['total_pages'],
+        'results_per_page': RESULTS_PER_PAGE,
+        'search_time_ms': search_results['search_time_ms']
+    })
+
+@app.route('/api/v1/page/<int:page_id>', methods=['GET'])
+def api_v1_page_details(page_id):
+    """
+    Get full page details with 5-tier score breakdown
+    
+    Path params:
+        page_id: Database page ID
+    
+    Returns:
+        JSON with page info, score breakdown, badges, and media literacy warning
+    """
+    page = get_page_with_scores(page_id)
+    
+    if not page:
+        return jsonify({
+            'error': 'Page not found',
+            'message': f'No page found with ID {page_id}'
+        }), 404
+    
+    # Convert datetimes to ISO strings
+    if page.get('crawled_at'):
+        page['crawled_at'] = page['crawled_at'].isoformat()
+    if page.get('scored_at'):
+        page['scored_at'] = page['scored_at'].isoformat()
+    
+    return jsonify(page)
+
+@app.route('/api/v1/leaderboard', methods=['GET'])
+def api_v1_leaderboard():
+    """
+    Get leaderboard for mobile app
+    
+    Query params:
+        limit: Number of entries (default: 100, max: 500)
+    
+    Returns:
+        JSON with leaders array and stats
+    """
+    limit = request.args.get('limit', 100, type=int)
+    limit = min(max(1, limit), 500)  # Clamp between 1 and 500
+    
+    leaders = get_leaderboard(limit)
+    
+    # Get total participant count
+    total_result = query_db(
+        "SELECT COUNT(*) as total FROM user_sessions WHERE total_points > 0",
+        one=True
+    )
+    total_participants = total_result['total'] if total_result else 0
+    
+    return jsonify({
+        'leaders': leaders,
+        'total_participants': total_participants,
+        'limit': limit
+    })
+
+@app.route('/api/v1/session/register', methods=['POST'])
+def api_v1_session_register():
+    """
+    Register device and get/create session
+    
+    Body:
+        device_id: Unique device identifier (required)
+    
+    Returns:
+        JSON with session info
+    """
+    data = request.get_json()
+    device_id = data.get('device_id') if data else None
+    
+    if not device_id:
+        return jsonify({
+            'error': 'Missing device_id',
+            'message': 'Please provide a device_id in the request body'
+        }), 400
+    
+    session = get_or_create_session_by_device(device_id)
+    
+    if not session:
+        return jsonify({
+            'error': 'Failed to create session',
+            'message': 'Could not create or retrieve session'
+        }), 500
+    
+    # Get rank if they have points
+    rank = get_user_rank(session['total_points'])
+    
+    return jsonify({
+        'session_id': session['session_id'],
+        'device_id': device_id,
+        'total_points': session['total_points'],
+        'quests_completed': session['quests_completed'],
+        'rank': rank,
+        'is_new': session.get('is_new', False)
+    })
+
+@app.route('/api/v1/session/<device_id>', methods=['GET'])
+def api_v1_session_get(device_id):
+    """
+    Get session stats by device_id
+    
+    Path params:
+        device_id: Device identifier
+    
+    Returns:
+        JSON with session info and rank
+    """
+    session = query_db(
+        "SELECT * FROM user_sessions WHERE device_id = %s",
+        (device_id,),
+        one=True
+    )
+    
+    if not session:
+        return jsonify({
+            'error': 'Session not found',
+            'message': f'No session found for device {device_id}'
+        }), 404
+    
+    session = dict(session)
+    
+    # Get rank
+    rank = get_user_rank(session['total_points'])
+    
+    return jsonify({
+        'session_id': session['session_id'],
+        'device_id': device_id,
+        'total_points': session['total_points'],
+        'quests_completed': session['quests_completed'],
+        'rank': rank,
+        'created_at': session['created_at'].isoformat() if session.get('created_at') else None,
+        'last_active': session['last_active'].isoformat() if session.get('last_active') else None
+    })
+
+@app.route('/api/v1/feedback', methods=['POST'])
+def api_v1_feedback():
+    """
+    Submit feedback from mobile app (device-based auth)
+    
+    Body:
+        device_id: Device identifier (required)
+        page_id: Page ID (required)
+        feedback_type: 'helpful' | 'not_helpful' (required)
+        query: Search query that led to this result (optional)
+    
+    Returns:
+        JSON with success status
+    """
+    data = request.get_json()
+    
+    device_id = data.get('device_id')
+    page_id = data.get('page_id')
+    feedback_type = data.get('feedback_type')
+    search_query = data.get('query', '')
+    
+    if not device_id:
+        return jsonify({'error': 'Missing device_id'}), 400
+    
+    if not page_id:
+        return jsonify({'error': 'Missing page_id'}), 400
+    
+    if feedback_type not in ['helpful', 'not_helpful']:
+        return jsonify({'error': 'Invalid feedback_type. Must be "helpful" or "not_helpful"'}), 400
+    
+    # Get session for device
+    session = get_or_create_session_by_device(device_id)
+    
+    if not session:
+        return jsonify({'error': 'Failed to get session'}), 500
+    
+    try:
+        execute_db(
+            """INSERT INTO page_feedback (page_id, session_id, feedback_type, search_query)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (page_id, session_id) 
+               DO UPDATE SET feedback_type = EXCLUDED.feedback_type""",
+            (page_id, session['session_id'], feedback_type, search_query)
+        )
+        
+        return jsonify({
+            'success': True,
+            'page_id': page_id,
+            'feedback_type': feedback_type
+        })
+        
+    except Exception as e:
+        logger.error(f"API v1 feedback error: {e}")
+        return jsonify({'error': 'Failed to save feedback'}), 500
+
+@app.route('/api/v1/media-literacy/claim', methods=['POST'])
+def api_v1_claim_media_literacy():
+    """
+    Claim Internet Points from mobile app (device-based auth)
+    
+    Body:
+        device_id: Device identifier (required)
+        page_id: Page ID (required)
+        warning_id: Warning ID (optional)
+    
+    Returns:
+        JSON with points info
+    """
+    data = request.get_json()
+    
+    device_id = data.get('device_id')
+    page_id = data.get('page_id')
+    warning_id = data.get('warning_id')
+    
+    if not device_id:
+        return jsonify({'error': 'Missing device_id'}), 400
+    
+    if not page_id:
+        return jsonify({'error': 'Missing page_id'}), 400
+    
+    # Get session for device
+    session = get_or_create_session_by_device(device_id)
+    
+    if not session:
+        return jsonify({'error': 'Failed to get session'}), 500
+    
+    # Check if already claimed
+    existing = query_db(
+        """SELECT * FROM media_literacy_interactions 
+           WHERE session_id = %s AND page_id = %s""",
+        (session['session_id'], page_id),
+        one=True
+    )
+    
+    if existing:
+        return jsonify({
+            'success': False,
+            'message': 'Already claimed',
+            'total_points': session['total_points'],
+            'quests_completed': session['quests_completed']
+        })
+    
+    # Award points
+    points_to_award = 5
+    
+    try:
+        # Record interaction
+        execute_db(
+            """INSERT INTO media_literacy_interactions 
+               (session_id, page_id, warning_id, points_awarded)
+               VALUES (%s, %s, %s, %s)""",
+            (session['session_id'], page_id, warning_id, points_to_award)
+        )
+        
+        # Update session points
+        execute_db(
+            """UPDATE user_sessions 
+               SET total_points = total_points + %s,
+                   quests_completed = quests_completed + 1
+               WHERE session_id = %s""",
+            (points_to_award, session['session_id'])
+        )
+        
+        # Get updated total
+        updated_session = query_db(
+            "SELECT total_points, quests_completed FROM user_sessions WHERE session_id = %s",
+            (session['session_id'],),
+            one=True
+        )
+        
+        # Get new rank
+        rank = get_user_rank(updated_session['total_points'])
+        
+        return jsonify({
+            'success': True,
+            'points_awarded': points_to_award,
+            'total_points': updated_session['total_points'],
+            'quests_completed': updated_session['quests_completed'],
+            'rank': rank
+        })
+        
+    except Exception as e:
+        logger.error(f"API v1 points claim error: {e}")
+        return jsonify({'error': 'Failed to award points'}), 500
+
+@app.route('/api/v1/stats', methods=['GET'])
+def api_v1_stats():
+    """
+    Get index statistics for mobile app
+    
+    Returns:
+        JSON with index stats
+    """
+    stats = get_index_stats()
+    
+    # Convert datetime if present
+    if stats.get('last_crawled'):
+        stats['last_crawled'] = stats['last_crawled'].isoformat()
+    
+    return jsonify(stats)
+
+# ============================================================================
 # ERROR HANDLERS
 # ============================================================================
 
 @app.errorhandler(404)
 def not_found(e):
+    # Check if this is an API request
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Not found', 'message': 'The requested endpoint does not exist'}), 404
+    
     session = get_or_create_session()
     response = make_response(render_template('404.html', session=session), 404)
     return set_session_cookie(response, session['session_id'])
 
 @app.errorhandler(500)
 def server_error(e):
+    # Check if this is an API request
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Server error', 'message': 'An internal server error occurred'}), 500
+    
     session = get_or_create_session()
     response = make_response(render_template('500.html', session=session), 500)
     return set_session_cookie(response, session['session_id'])
