@@ -209,12 +209,18 @@ def get_user_rank(total_points):
     return rank_result['rank'] if rank_result else None
 
 # ============================================================================
-# SEARCH FUNCTIONS
+# SEARCH FUNCTIONS - OPTIMIZED
 # ============================================================================
 
 def search_pages(query, sort='relevance', page=1):
     """
-    Search indexed pages
+    Search indexed pages - OPTIMIZED VERSION
+    
+    Key optimizations:
+    1. Removed ILIKE on content (was causing full table scans)
+    2. Uses full-text search (ts_rank) instead of similarity() on content
+    3. Added statement timeout to prevent runaway queries
+    4. Simplified COUNT query
     
     Args:
         query: Search string
@@ -227,146 +233,130 @@ def search_pages(query, sort='relevance', page=1):
     start_time = time.time()
     offset = (page - 1) * RESULTS_PER_PAGE
     
-    # Build ORDER BY clause based on sort
-    if sort == 'score':
-        order_by = "final_composite_score DESC, similarity(title, %s) DESC"
-    elif sort == 'recent':
-        order_by = "crawled_at DESC, similarity(title, %s) DESC"
-    else:  # relevance (default)
-        order_by = """
-            (similarity(title, %s) * 2 + similarity(content, %s)) DESC,
-            final_composite_score DESC
-        """
+    # Set statement timeout (10 seconds max) to prevent worker timeout
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SET statement_timeout = '10s'")
+    cursor.close()
     
-    # Count total results
-    count_result = query_db(
-        """
-        SELECT COUNT(*) as total
-        FROM pages
-        WHERE indexable = true
-          AND final_composite_score >= %s
-          AND (
-              title %% %s 
-              OR content %% %s
-              OR title ILIKE %s
-              OR content ILIKE %s
-          )
-        """,
-        (MIN_INDEXABLE_SCORE, query, query, f'%{query}%', f'%{query}%'),
-        one=True
-    )
-    total_count = count_result['total'] if count_result else 0
-    
-    # Get results with relevance scoring
-    if sort == 'relevance':
-        results = query_db(
-            f"""
-            SELECT 
-                p.id,
-                p.url,
-                p.domain,
-                p.title,
-                LEFT(p.content, 300) as snippet,
-                p.final_composite_score,
-                p.islamic_alignment_score,
-                p.quality_score,
-                p.authority_score,
-                p.media_literacy_score,
-                p.equity_boost,
-                p.crawled_at,
-                similarity(p.title, %s) as title_sim,
-                similarity(p.content, %s) as content_sim,
-                ed.minority_owned,
-                ed.women_owned,
-                ed.veteran_owned,
-                ed.b_corp,
-                ed.lgbtq_owned,
-                ed.disability_owned,
-                COALESCE(pfs.helpful_count, 0) as helpful_count,
-                COALESCE(pfs.not_helpful_count, 0) as not_helpful_count
-            FROM pages p
-            LEFT JOIN equity_domains ed ON p.domain = ed.domain
-            LEFT JOIN page_feedback_summary pfs ON p.id = pfs.page_id
-            WHERE p.indexable = true
-              AND p.final_composite_score >= %s
-              AND (
-                  p.title %% %s 
-                  OR p.content %% %s
-                  OR p.title ILIKE %s
-                  OR p.content ILIKE %s
-              )
-            ORDER BY {order_by}
-            LIMIT %s OFFSET %s
-            """,
-            (query, query, MIN_INDEXABLE_SCORE, query, query, f'%{query}%', f'%{query}%',
-             query, query, RESULTS_PER_PAGE, offset)
-        )
-    else:
-        results = query_db(
-            f"""
-            SELECT 
-                p.id,
-                p.url,
-                p.domain,
-                p.title,
-                LEFT(p.content, 300) as snippet,
-                p.final_composite_score,
-                p.islamic_alignment_score,
-                p.quality_score,
-                p.authority_score,
-                p.media_literacy_score,
-                p.equity_boost,
-                p.crawled_at,
-                similarity(p.title, %s) as title_sim,
-                similarity(p.content, %s) as content_sim,
-                ed.minority_owned,
-                ed.women_owned,
-                ed.veteran_owned,
-                ed.b_corp,
-                ed.lgbtq_owned,
-                ed.disability_owned,
-                COALESCE(pfs.helpful_count, 0) as helpful_count,
-                COALESCE(pfs.not_helpful_count, 0) as not_helpful_count
-            FROM pages p
-            LEFT JOIN equity_domains ed ON p.domain = ed.domain
-            LEFT JOIN page_feedback_summary pfs ON p.id = pfs.page_id
-            WHERE p.indexable = true
-              AND p.final_composite_score >= %s
-              AND (
-                  p.title %% %s 
-                  OR p.content %% %s
-                  OR p.title ILIKE %s
-                  OR p.content ILIKE %s
-              )
-            ORDER BY {order_by}
-            LIMIT %s OFFSET %s
-            """,
-            (query, query, MIN_INDEXABLE_SCORE, query, query, f'%{query}%', f'%{query}%',
-             query, RESULTS_PER_PAGE, offset)
-        )
-    
-    # Calculate timing
-    search_time_ms = int((time.time() - start_time) * 1000)
-    
-    # Log search (anonymized)
     try:
-        execute_db(
-            """INSERT INTO search_logs (query, results_count, top_result_score, search_time_ms, sort_type, page_number)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (query, total_count,
-             results[0]['final_composite_score'] if results else None,
-             search_time_ms, sort, page)
+        # Fast COUNT using trigram on title + full-text on content
+        # Removed ILIKE - it bypasses indexes and causes full table scans
+        count_result = query_db(
+            """
+            SELECT COUNT(*) as total
+            FROM pages
+            WHERE indexable = true
+              AND final_composite_score >= %s
+              AND (
+                  title %% %s 
+                  OR to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+              )
+            """,
+            (MIN_INDEXABLE_SCORE, query, query),
+            one=True
         )
+        total_count = count_result['total'] if count_result else 0
+        
+        # Build ORDER BY clause based on sort
+        if sort == 'score':
+            order_clause = "p.final_composite_score DESC, similarity(p.title, %s) DESC"
+            order_params = (query,)
+        elif sort == 'recent':
+            order_clause = "p.crawled_at DESC, similarity(p.title, %s) DESC"
+            order_params = (query,)
+        else:  # relevance (default)
+            # Use ts_rank for content relevance (uses the GIN index!)
+            order_clause = """
+                (similarity(p.title, %s) * 3 + 
+                 ts_rank(to_tsvector('english', p.content), plainto_tsquery('english', %s))) DESC,
+                p.final_composite_score DESC
+            """
+            order_params = (query, query)
+        
+        # Main search query - optimized
+        results = query_db(
+            f"""
+            SELECT 
+                p.id,
+                p.url,
+                p.domain,
+                p.title,
+                LEFT(p.content, 300) as snippet,
+                p.final_composite_score,
+                p.islamic_alignment_score,
+                p.quality_score,
+                p.authority_score,
+                p.media_literacy_score,
+                p.equity_boost,
+                p.crawled_at,
+                similarity(p.title, %s) as title_sim,
+                ts_rank(to_tsvector('english', p.content), plainto_tsquery('english', %s)) as content_sim,
+                ed.minority_owned,
+                ed.women_owned,
+                ed.veteran_owned,
+                ed.b_corp,
+                ed.lgbtq_owned,
+                ed.disability_owned,
+                COALESCE(pfs.helpful_count, 0) as helpful_count,
+                COALESCE(pfs.not_helpful_count, 0) as not_helpful_count
+            FROM pages p
+            LEFT JOIN equity_domains ed ON p.domain = ed.domain
+            LEFT JOIN page_feedback_summary pfs ON p.id = pfs.page_id
+            WHERE p.indexable = true
+              AND p.final_composite_score >= %s
+              AND (
+                  p.title %% %s 
+                  OR to_tsvector('english', p.content) @@ plainto_tsquery('english', %s)
+              )
+            ORDER BY {order_clause}
+            LIMIT %s OFFSET %s
+            """,
+            (query, query, MIN_INDEXABLE_SCORE, query, query) + order_params + (RESULTS_PER_PAGE, offset)
+        )
+        
+        # Calculate timing
+        search_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log search (anonymized)
+        try:
+            execute_db(
+                """INSERT INTO search_logs (query, results_count, top_result_score, search_time_ms, sort_type, page_number)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (query, total_count,
+                 results[0]['final_composite_score'] if results else None,
+                 search_time_ms, sort, page)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log search: {e}")
+        
+        return {
+            'results': [dict(r) for r in results],
+            'total_count': total_count,
+            'search_time_ms': search_time_ms,
+            'page': page,
+            'total_pages': (total_count + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE
+        }
+        
     except Exception as e:
-        logger.warning(f"Failed to log search: {e}")
-    
-    return {
-        'results': [dict(r) for r in results],
-        'total_count': total_count,
-        'search_time_ms': search_time_ms,
-        'page': page,
-        'total_pages': (total_count + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE
-    }
+        logger.error(f"Search query error: {e}")
+        # Return empty results on timeout/error
+        return {
+            'results': [],
+            'total_count': 0,
+            'page': page,
+            'total_pages': 0,
+            'search_time_ms': int((time.time() - start_time) * 1000),
+            'error': 'Search timed out. Try a more specific query.'
+        }
+    finally:
+        # Reset timeout
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SET statement_timeout = '0'")
+            cursor.close()
+        except:
+            pass
 
 def get_score_badge(score):
     """Return badge emoji and class based on score"""
@@ -761,6 +751,9 @@ def search():
     # Perform search
     search_results = search_pages(query, sort, page)
     
+    # Check if search had an error
+    error_msg = search_results.get('error')
+    
     # Add badges and check media literacy for each result
     for result in search_results['results']:
         result['score_badge'] = get_score_badge(result['final_composite_score'])
@@ -786,7 +779,8 @@ def search():
         search_time_ms=search_results['search_time_ms'],
         page=page,
         total_pages=search_results['total_pages'],
-        session=session
+        session=session,
+        error=error_msg
     ))
     
     return set_session_cookie(response, session['session_id'])
@@ -1023,7 +1017,7 @@ def api_v1_search():
         
         api_results.append(result)
     
-    return jsonify({
+    response_data = {
         'query': query,
         'sort': sort,
         'results': api_results,
@@ -1032,7 +1026,13 @@ def api_v1_search():
         'total_pages': search_results['total_pages'],
         'results_per_page': RESULTS_PER_PAGE,
         'search_time_ms': search_results['search_time_ms']
-    })
+    }
+    
+    # Include error if present
+    if search_results.get('error'):
+        response_data['error'] = search_results['error']
+    
+    return jsonify(response_data)
 
 @app.route('/api/v1/page/<int:page_id>', methods=['GET'])
 def api_v1_page_details(page_id):
