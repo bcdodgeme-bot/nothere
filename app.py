@@ -940,6 +940,7 @@ def api_stats():
 # === NEW FOR iOS API === MOBILE API v1 ENDPOINTS
 # ============================================================================
 
+@app.route('/api/search', methods=['GET'])  # Alias for iOS app compatibility
 @app.route('/api/v1/search', methods=['GET'])
 def api_v1_search():
     """
@@ -1034,6 +1035,7 @@ def api_v1_search():
     
     return jsonify(response_data)
 
+@app.route('/api/page/<int:page_id>', methods=['GET'])  # Alias for iOS app
 @app.route('/api/v1/page/<int:page_id>', methods=['GET'])
 def api_v1_page_details(page_id):
     """
@@ -1061,6 +1063,7 @@ def api_v1_page_details(page_id):
     
     return jsonify(page)
 
+@app.route('/api/leaderboard', methods=['GET'])  # Alias for iOS app
 @app.route('/api/v1/leaderboard', methods=['GET'])
 def api_v1_leaderboard():
     """
@@ -1090,6 +1093,7 @@ def api_v1_leaderboard():
         'limit': limit
     })
 
+@app.route('/api/session/register', methods=['POST'])  # Alias for iOS app
 @app.route('/api/v1/session/register', methods=['POST'])
 def api_v1_session_register():
     """
@@ -1130,6 +1134,7 @@ def api_v1_session_register():
         'is_new': session.get('is_new', False)
     })
 
+@app.route('/api/session/<device_id>', methods=['GET'])  # Alias for iOS app
 @app.route('/api/v1/session/<device_id>', methods=['GET'])
 def api_v1_session_get(device_id):
     """
@@ -1168,6 +1173,7 @@ def api_v1_session_get(device_id):
         'last_active': session['last_active'].isoformat() if session.get('last_active') else None
     })
 
+@app.route('/api/feedback', methods=['POST'])  # Alias for iOS app
 @app.route('/api/v1/feedback', methods=['POST'])
 def api_v1_feedback():
     """
@@ -1223,6 +1229,7 @@ def api_v1_feedback():
         logger.error(f"API v1 feedback error: {e}")
         return jsonify({'error': 'Failed to save feedback'}), 500
 
+@app.route('/api/media-literacy/claim', methods=['POST'])  # Alias for iOS app
 @app.route('/api/v1/media-literacy/claim', methods=['POST'])
 def api_v1_claim_media_literacy():
     """
