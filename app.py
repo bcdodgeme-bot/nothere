@@ -260,23 +260,23 @@ def search_pages(query, sort='relevance', page=1):
             f"""
             WITH matched_pages AS (
                 -- Branch 1: Title trigram match (uses GIN trigram index)
-                -- Capped at 200 to prevent broad queries from scanning too many rows
+                -- No ORDER BY here - lets Postgres use the GIN index directly
+                -- Sorting happens on the final combined set below
                 (SELECT id FROM pages
                 WHERE indexable = true
                   AND final_composite_score >= %s
                   AND title %% %s
-                ORDER BY final_composite_score DESC
                 LIMIT 200)
                 
                 UNION
                 
                 -- Branch 2: Content full-text match (uses GIN FTS index)
-                -- Capped at 200 to prevent broad queries from scanning too many rows
+                -- No ORDER BY here - prevents Postgres from choosing the composite
+                -- score index and scanning thousands of non-matching rows
                 (SELECT id FROM pages
                 WHERE indexable = true
                   AND final_composite_score >= %s
                   AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
-                ORDER BY final_composite_score DESC
                 LIMIT 200)
             )
             SELECT 
