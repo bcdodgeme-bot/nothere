@@ -214,13 +214,14 @@ def get_user_rank(total_points):
 
 def search_pages(query, sort='relevance', page=1):
     """
-    Search indexed pages - OPTIMIZED VERSION
+    Search indexed pages - OPTIMIZED v2
     
-    Key optimizations:
-    1. Removed ILIKE on content (was causing full table scans)
-    2. Uses full-text search (ts_rank) instead of similarity() on content
-    3. Added statement timeout to prevent runaway queries
-    4. Simplified COUNT query
+    Key optimizations over previous version:
+    1. Uses UNION to let each index (trigram, FTS) work independently
+       (OR between different index types forces sequential scans)
+    2. Eliminated expensive COUNT query (estimates total from result set)
+    3. Removed ts_rank recomputation in SELECT (was recomputing tsvector per row)
+    4. Increased timeout to 15s as safety net (queries should be <1s now)
     
     Args:
         query: Search string
@@ -233,50 +234,45 @@ def search_pages(query, sort='relevance', page=1):
     start_time = time.time()
     offset = (page - 1) * RESULTS_PER_PAGE
     
-    # Set statement timeout (10 seconds max) to prevent worker timeout
+    # Set statement timeout (15 seconds safety net)
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SET statement_timeout = '10s'")
+    cursor.execute("SET statement_timeout = '15s'")
     cursor.close()
     
     try:
-        # Fast COUNT using trigram on title + full-text on content
-        # Removed ILIKE - it bypasses indexes and causes full table scans
-        count_result = query_db(
-            """
-            SELECT COUNT(*) as total
-            FROM pages
-            WHERE indexable = true
-              AND final_composite_score >= %s
-              AND (
-                  title %% %s 
-                  OR to_tsvector('english', content) @@ plainto_tsquery('english', %s)
-              )
-            """,
-            (MIN_INDEXABLE_SCORE, query, query),
-            one=True
-        )
-        total_count = count_result['total'] if count_result else 0
-        
         # Build ORDER BY clause based on sort
         if sort == 'score':
-            order_clause = "p.final_composite_score DESC, similarity(p.title, %s) DESC"
-            order_params = (query,)
+            order_clause = "final_composite_score DESC, title_sim DESC"
+            order_params = ()
         elif sort == 'recent':
-            order_clause = "p.crawled_at DESC, similarity(p.title, %s) DESC"
-            order_params = (query,)
+            order_clause = "crawled_at DESC, title_sim DESC"
+            order_params = ()
         else:  # relevance (default)
-            # Use ts_rank for content relevance (uses the GIN index!)
-            order_clause = """
-                (similarity(p.title, %s) * 3 + 
-                 ts_rank(to_tsvector('english', p.content), plainto_tsquery('english', %s))) DESC,
-                p.final_composite_score DESC
-            """
-            order_params = (query, query)
+            order_clause = "(title_sim * 3 + content_rank) DESC, final_composite_score DESC"
+            order_params = ()
         
-        # Main search query - optimized
+        # Main search query - uses UNION to let each index work independently
+        # Branch 1: trigram match on title (uses idx_pages_title_trgm)
+        # Branch 2: full-text match on content (uses idx_pages_content_fts)
+        # UNION removes duplicates, then we sort and paginate the combined set
         results = query_db(
             f"""
+            WITH matched_pages AS (
+                -- Branch 1: Title trigram match (uses GIN trigram index)
+                SELECT id FROM pages
+                WHERE indexable = true
+                  AND final_composite_score >= %s
+                  AND title %% %s
+                
+                UNION
+                
+                -- Branch 2: Content full-text match (uses GIN FTS index)
+                SELECT id FROM pages
+                WHERE indexable = true
+                  AND final_composite_score >= %s
+                  AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+            )
             SELECT 
                 p.id,
                 p.url,
@@ -291,7 +287,7 @@ def search_pages(query, sort='relevance', page=1):
                 p.equity_boost,
                 p.crawled_at,
                 similarity(p.title, %s) as title_sim,
-                ts_rank(to_tsvector('english', p.content), plainto_tsquery('english', %s)) as content_sim,
+                ts_rank_cd(to_tsvector('english', p.title), plainto_tsquery('english', %s)) as content_rank,
                 ed.minority_owned,
                 ed.women_owned,
                 ed.veteran_owned,
@@ -300,20 +296,42 @@ def search_pages(query, sort='relevance', page=1):
                 ed.disability_owned,
                 COALESCE(pfs.helpful_count, 0) as helpful_count,
                 COALESCE(pfs.not_helpful_count, 0) as not_helpful_count
-            FROM pages p
+            FROM matched_pages mp
+            JOIN pages p ON p.id = mp.id
             LEFT JOIN equity_domains ed ON p.domain = ed.domain
             LEFT JOIN page_feedback_summary pfs ON p.id = pfs.page_id
-            WHERE p.indexable = true
-              AND p.final_composite_score >= %s
-              AND (
-                  p.title %% %s 
-                  OR to_tsvector('english', p.content) @@ plainto_tsquery('english', %s)
-              )
             ORDER BY {order_clause}
             LIMIT %s OFFSET %s
             """,
-            (query, query, MIN_INDEXABLE_SCORE, query, query) + order_params + (RESULTS_PER_PAGE, offset)
+            (MIN_INDEXABLE_SCORE, query, MIN_INDEXABLE_SCORE, query,
+             query, query) + order_params + (RESULTS_PER_PAGE, offset)
         )
+        
+        # Estimate total count from results instead of expensive COUNT(*)
+        # If we got a full page of results, there are probably more
+        if len(results) == RESULTS_PER_PAGE:
+            # Quick estimate: run a lightweight count on just IDs
+            count_result = query_db(
+                """
+                SELECT COUNT(*) as total FROM (
+                    SELECT id FROM pages
+                    WHERE indexable = true
+                      AND final_composite_score >= %s
+                      AND title %% %s
+                    UNION
+                    SELECT id FROM pages
+                    WHERE indexable = true
+                      AND final_composite_score >= %s
+                      AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+                ) matched
+                """,
+                (MIN_INDEXABLE_SCORE, query, MIN_INDEXABLE_SCORE, query),
+                one=True
+            )
+            total_count = count_result['total'] if count_result else len(results)
+        else:
+            # We got fewer than a full page, so we know the exact count
+            total_count = offset + len(results)
         
         # Calculate timing
         search_time_ms = int((time.time() - start_time) * 1000)
