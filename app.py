@@ -260,18 +260,24 @@ def search_pages(query, sort='relevance', page=1):
             f"""
             WITH matched_pages AS (
                 -- Branch 1: Title trigram match (uses GIN trigram index)
-                SELECT id FROM pages
+                -- Capped at 200 to prevent broad queries from scanning too many rows
+                (SELECT id FROM pages
                 WHERE indexable = true
                   AND final_composite_score >= %s
                   AND title %% %s
+                ORDER BY final_composite_score DESC
+                LIMIT 200)
                 
                 UNION
                 
                 -- Branch 2: Content full-text match (uses GIN FTS index)
-                SELECT id FROM pages
+                -- Capped at 200 to prevent broad queries from scanning too many rows
+                (SELECT id FROM pages
                 WHERE indexable = true
                   AND final_composite_score >= %s
                   AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+                ORDER BY final_composite_score DESC
+                LIMIT 200)
             )
             SELECT 
                 p.id,
@@ -307,28 +313,12 @@ def search_pages(query, sort='relevance', page=1):
              query, query) + order_params + (RESULTS_PER_PAGE, offset)
         )
         
-        # Estimate total count from results instead of expensive COUNT(*)
-        # If we got a full page of results, there are probably more
+        # Estimate total count - since UNION branches are capped at 200 each,
+        # max candidates is ~400. No need for expensive separate COUNT query.
         if len(results) == RESULTS_PER_PAGE:
-            # Quick estimate: run a lightweight count on just IDs
-            count_result = query_db(
-                """
-                SELECT COUNT(*) as total FROM (
-                    SELECT id FROM pages
-                    WHERE indexable = true
-                      AND final_composite_score >= %s
-                      AND title %% %s
-                    UNION
-                    SELECT id FROM pages
-                    WHERE indexable = true
-                      AND final_composite_score >= %s
-                      AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
-                ) matched
-                """,
-                (MIN_INDEXABLE_SCORE, query, MIN_INDEXABLE_SCORE, query),
-                one=True
-            )
-            total_count = count_result['total'] if count_result else len(results)
+            # More results exist. Since we capped at 200 per branch, estimate
+            # conservatively. Users rarely paginate past page 3-4 anyway.
+            total_count = max(offset + RESULTS_PER_PAGE + 1, 200)
         else:
             # We got fewer than a full page, so we know the exact count
             total_count = offset + len(results)
