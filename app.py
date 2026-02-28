@@ -243,14 +243,16 @@ def search_pages(query, sort='relevance', page=1):
     try:
         # Build ORDER BY clause based on sort
         if sort == 'score':
-            order_clause = "final_composite_score DESC, title_sim DESC"
-            order_params = ()
+            order_clause = "p.final_composite_score DESC, similarity(p.title, %s) DESC"
+            order_params = (query,)
         elif sort == 'recent':
-            order_clause = "crawled_at DESC, title_sim DESC"
-            order_params = ()
+            order_clause = "p.crawled_at DESC, similarity(p.title, %s) DESC"
+            order_params = (query,)
         else:  # relevance (default)
-            order_clause = "(title_sim * 3 + content_rank) DESC, final_composite_score DESC"
-            order_params = ()
+            order_clause = """(similarity(p.title, %s) * 3 + 
+                 ts_rank_cd(to_tsvector('english', p.title), plainto_tsquery('english', %s))) DESC,
+                p.final_composite_score DESC"""
+            order_params = (query, query)
         
         # Main search query - uses UNION to let each index work independently
         # Branch 1: trigram match on title (uses idx_pages_title_trgm)
