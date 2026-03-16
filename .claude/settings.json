@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /Users/b.c.dodge/Documents/Ghostline_Area/Ghostline-live/nothere/*.py)",
+      "Bash(python3 -m py_compile app.py)",
+      "Bash(python3 -m py_compile crawler.py)",
+      "Bash(python3 -m py_compile composite_scorer.py)",
+      "Bash(python3 -m py_compile media_literacy_scorer.py)",
+      "Bash(python3 -m py_compile blocklist.py)",
+      "Bash(python3 -m py_compile redis_manager.py)",
+      "Bash(python3 -m py_compile auto_update_splc.py)",
+      "Bash(python3 -m py_compile auto_update_bcorp.py)",
+      "Bash(python3 -m py_compile automated_updater.py)"
+    ]
+  }
+}

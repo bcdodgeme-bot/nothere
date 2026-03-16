@@ -124,13 +124,15 @@ class Crawler:
     def is_url_crawled(self, url_hash):
         """Check if URL has already been crawled"""
         cursor = self.db_conn.cursor()
-        cursor.execute(
-            "SELECT 1 FROM pages WHERE url_hash = %s LIMIT 1",
-            (url_hash,)
-        )
-        result = cursor.fetchone()
-        cursor.close()
-        return result is not None
+        try:
+            cursor.execute(
+                "SELECT 1 FROM pages WHERE url_hash = %s LIMIT 1",
+                (url_hash,)
+            )
+            result = cursor.fetchone()
+            return result is not None
+        finally:
+            cursor.close()
     
     def can_fetch(self, url):
         """Check robots.txt to see if we can fetch this URL"""
@@ -153,11 +155,11 @@ class Crawler:
                 rp.set_url(robots_url)
                 
                 try:
-                    # Fetch robots.txt with 5 minute timeout
+                    # Fetch robots.txt with 10 second timeout
                     response = requests.get(
                         robots_url,
                         headers=self.headers,
-                        timeout=300  # 5 minutes
+                        timeout=10
                     )
                     
                     if response.status_code == 200:
@@ -171,7 +173,7 @@ class Crawler:
                         return True
                         
                 except requests.exceptions.Timeout:
-                    logger.warning(f"Timeout fetching robots.txt for {base_url} (5 min limit)")
+                    logger.warning(f"Timeout fetching robots.txt for {base_url} (10s limit)")
                     self.robots_cache.set(base_url, None)
                     return True
                 except Exception as e:
@@ -265,7 +267,7 @@ class Crawler:
             return {
                 'title': title[:500] if title else None,  # Limit title length
                 'content': text_content[:50000],  # Limit content length
-                'links': links
+                'links': links[:200]  # Cap at 200 links per page
             }
             
         except Exception as e:
@@ -595,12 +597,19 @@ def main():
     
     args = parser.parse_args()
     
-    # Get database connection
-    try:
-        db_conn = psycopg2.connect(os.environ['DATABASE_URL'])
-        logger.info("✅ Connected to PostgreSQL")
-    except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
+    # Get database connection (retry up to 3 times)
+    db_conn = None
+    for attempt in range(1, 4):
+        try:
+            db_conn = psycopg2.connect(os.environ['DATABASE_URL'])
+            logger.info("✅ Connected to PostgreSQL")
+            break
+        except Exception as e:
+            logger.error(f"Failed to connect to database (attempt {attempt}/3): {e}")
+            if attempt < 3:
+                time.sleep(5)
+    if db_conn is None:
+        logger.error("All database connection attempts failed, exiting")
         sys.exit(1)
     
     # Import RedisManager

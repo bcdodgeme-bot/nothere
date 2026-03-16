@@ -16,6 +16,7 @@ Models:
 import os
 import json
 import logging
+import threading
 import requests
 from datetime import datetime
 
@@ -107,7 +108,7 @@ class MediaLiteracyScorer:
             'FDA doesn\'t approve because', 'alternative to chemotherapy',
             
             # Historical revisionism
-            'flat earth', 'moon landing fake', 'holocaust hoax',
+            'moon landing fake', 'holocaust hoax',
             'crisis actors', 'false flag operation',
             
             # Statistical manipulation indicators
@@ -408,20 +409,24 @@ Be strict but fair. Academic and educational content should score 70+. Genuine m
 
 # Standalone function for use in composite_scorer.py
 _scorer_instance = None
+_scorer_instance_lock = threading.Lock()
 
 def calculate_media_literacy_score(content, domain, title=None, db_conn=None):
     """
     Calculate media literacy score (standalone function)
-    
+
     This is the function called by composite_scorer.py
-    
+
     Returns:
         tuple: (score: int, details: dict)
     """
     global _scorer_instance
+    # Double-checked locking for thread safety
     if _scorer_instance is None:
-        _scorer_instance = MediaLiteracyScorer(db_conn)
-    elif db_conn and not _scorer_instance.db_conn:
+        with _scorer_instance_lock:
+            if _scorer_instance is None:
+                _scorer_instance = MediaLiteracyScorer(db_conn)
+    if db_conn and not _scorer_instance.db_conn:
         _scorer_instance.db_conn = db_conn
-    
+
     return _scorer_instance.calculate_media_literacy_score(content, domain, title)

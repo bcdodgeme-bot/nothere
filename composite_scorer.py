@@ -21,6 +21,7 @@ Override: SPLC/ACLU/CAIR flagged = instant 0 (never index)
 
 import re
 import logging
+import threading
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from collections import defaultdict, OrderedDict
@@ -83,6 +84,7 @@ class CompositeScorer:
         
         # Keyword cache - loaded once, not per-domain (OK to keep unbounded)
         self._keyword_cache = None
+        self._keyword_cache_lock = threading.Lock()
         
         # MEMORY FIX: Use LRU caches instead of unbounded dicts
         self._domain_authority_cache = LRUCache(max_size=MAX_CACHE_SIZE)
@@ -134,9 +136,13 @@ class CompositeScorer:
         Load all keywords and their themes from database
         Returns dict: {keyword: [(theme_id, principle, category), ...]}
         """
+        # Double-checked locking pattern for thread safety
         if self._keyword_cache is not None:
             return self._keyword_cache
-        
+        with self._keyword_cache_lock:
+            if self._keyword_cache is not None:
+                return self._keyword_cache
+
         cursor = self.db_conn.cursor()
         try:
             cursor.execute("""
@@ -315,9 +321,9 @@ class CompositeScorer:
                     return 10  # Moderate
                 else:
                     return 5   # Difficult
-            except:
-                pass
-        
+            except Exception as e:
+                logger.error(f"textstat readability error: {e}")
+
         # Fallback: Simple approximation
         words = content.split()
         sentences = content.count('.') + content.count('!') + content.count('?')
@@ -594,8 +600,9 @@ class CompositeScorer:
         cache_key = domain
         cached = self._domain_authority_cache.get(cache_key)
         if cached is not None:
-            # Cache for 7 days
-            if (datetime.now() - cached['timestamp']).days < 7:
+            # Cache for 7 days; use total_seconds() to handle future timestamps correctly
+            age_seconds = (datetime.now() - cached['timestamp']).total_seconds()
+            if 0 <= age_seconds < 7 * 86400:
                 return cached['score'], cached['details']
         
         details = {}
@@ -910,14 +917,20 @@ class CompositeScorer:
             'details': equity_details
         }
         
-        # Calculate weighted composite score
-        composite = (
-            islamic_normalized * 0.30 +
-            quality_score * 0.25 +
-            authority_score * 0.20 +
-            media_score * 0.15 +
-            equity_boost * 0.10
-        )
+        # Calculate weighted composite score, skipping None sub-scores and re-normalizing
+        _score_weights = [
+            (islamic_normalized, 0.30),
+            (quality_score, 0.25),
+            (authority_score, 0.20),
+            (media_score, 0.15),
+            (equity_boost, 0.10),
+        ]
+        _available = [(s, w) for s, w in _score_weights if s is not None]
+        if _available:
+            _total_weight = sum(w for _, w in _available)
+            composite = sum(s * (w / _total_weight) for s, w in _available)
+        else:
+            composite = 0
         
         # Round to integer
         final_score = int(round(composite))

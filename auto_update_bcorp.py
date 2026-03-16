@@ -35,10 +35,15 @@ class BCorpScraper:
         Note: B-Lab has a searchable directory, this is a simplified scraper
         """
         logger.info("Fetching B-Corp directory...")
-        
+
         # B-Corp directory may require API access or more sophisticated scraping
         # For now, we'll maintain a curated list of known B-Corps
-        self._add_known_bcorps()
+        try:
+            self._add_known_bcorps()
+        except Exception as e:
+            logger.error(f"Error adding known B-Corps: {e}")
+            return False
+        return True
     
     def _add_known_bcorps(self):
         """Add known B-Corps (manually curated + periodically updated)"""

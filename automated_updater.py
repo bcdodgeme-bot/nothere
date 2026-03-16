@@ -34,6 +34,8 @@ class AutomatedUpdater:
     def update_blocklists(self):
         """Update all blocklist sources"""
         logger.info("🛡️  Updating blocklists...")
+        logger.warning("NOTE: SPLC and B-Corp updates use separate DB operations. "
+                       "If B-Corp update fails after SPLC succeeds, partial state may exist.")
         
         # SPLC
         try:
@@ -77,31 +79,32 @@ class AutomatedUpdater:
         logger.info("📊 Checking for pages needing rescoring...")
         
         cursor = self.db_conn.cursor()
-        
-        # Count pages from updated domains
-        cursor.execute("""
-            SELECT COUNT(*) 
-            FROM pages p
-            WHERE EXISTS (
-                SELECT 1 FROM org_blocklist ob 
-                WHERE p.domain = ob.domain
-            )
-        """)
-        
-        blocklisted_pages = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT COUNT(*) 
-            FROM pages p
-            WHERE EXISTS (
-                SELECT 1 FROM equity_domains ed 
-                WHERE p.domain = ed.domain
-            )
-        """)
-        
-        equity_pages = cursor.fetchone()[0]
-        
-        cursor.close()
+
+        try:
+            # Count pages from updated domains
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM pages p
+                WHERE EXISTS (
+                    SELECT 1 FROM org_blocklist ob
+                    WHERE p.domain = ob.domain
+                )
+            """)
+
+            blocklisted_pages = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM pages p
+                WHERE EXISTS (
+                    SELECT 1 FROM equity_domains ed
+                    WHERE p.domain = ed.domain
+                )
+            """)
+
+            equity_pages = cursor.fetchone()[0]
+        finally:
+            cursor.close()
         
         logger.info(f"  • {blocklisted_pages} pages from blocklisted domains")
         logger.info(f"  • {equity_pages} pages from equity domains")

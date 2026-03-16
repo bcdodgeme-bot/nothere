@@ -82,18 +82,22 @@ def query_db(query, args=(), one=False):
     """Execute a query and return results as dictionaries"""
     conn = get_db()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute(query, args)
-    results = cursor.fetchall()
-    cursor.close()
-    return (results[0] if results else None) if one else results
+    try:
+        cursor.execute(query, args)
+        results = cursor.fetchall()
+        return (results[0] if results else None) if one else results
+    finally:
+        cursor.close()
 
 def execute_db(query, args=()):
     """Execute a query that modifies data"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute(query, args)
-    conn.commit()
-    cursor.close()
+    try:
+        cursor.execute(query, args)
+        conn.commit()
+    finally:
+        cursor.close()
 
 # ============================================================================
 # SESSION MANAGEMENT (Cookie-based for web)
@@ -122,7 +126,8 @@ def get_or_create_session():
     session_id = str(uuid.uuid4())
     execute_db(
         """INSERT INTO user_sessions (session_id, total_points, quests_completed, created_at, last_active)
-           VALUES (%s, 0, 0, NOW(), NOW())""",
+           VALUES (%s, 0, 0, NOW(), NOW())
+           ON CONFLICT (session_id) DO NOTHING""",
         (session_id,)
     )
     
@@ -180,7 +185,8 @@ def get_or_create_session_by_device(device_id):
     session_id = str(uuid.uuid4())
     execute_db(
         """INSERT INTO user_sessions (session_id, device_id, total_points, quests_completed, created_at, last_active)
-           VALUES (%s, %s, 0, 0, NOW(), NOW())""",
+           VALUES (%s, %s, 0, 0, NOW(), NOW())
+           ON CONFLICT (session_id) DO NOTHING""",
         (session_id, device_id)
     )
     
@@ -340,12 +346,13 @@ def search_pages(query, sort='relevance', page=1):
         except Exception as e:
             logger.warning(f"Failed to log search: {e}")
         
+        calculated_total_pages = (total_count + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE
         return {
             'results': [dict(r) for r in results],
             'total_count': total_count,
             'search_time_ms': search_time_ms,
             'page': page,
-            'total_pages': (total_count + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE
+            'total_pages': max(1, calculated_total_pages)
         }
         
     except Exception as e:
@@ -365,7 +372,7 @@ def search_pages(query, sort='relevance', page=1):
             cursor = conn.cursor()
             cursor.execute("SET statement_timeout = '0'")
             cursor.close()
-        except:
+        except Exception:
             pass
 
 def get_score_badge(score):
@@ -511,6 +518,8 @@ def get_page_with_scores(page_id):
 
 def check_media_literacy_triggers(content):
     """Check if content contains trigger keywords"""
+    if not content:
+        return []
     content_lower = content.lower()
     found_triggers = []
     for trigger in MEDIA_LITERACY_TRIGGERS:
@@ -843,10 +852,25 @@ def leaderboard():
     return set_session_cookie(response, session['session_id'])
 
 # ============================================================================
+# CSRF HELPERS
+# ============================================================================
+
+def require_json_content_type(f):
+    """Decorator: require Content-Type: application/json on POST requests"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.method == 'POST':
+            if not request.is_json:
+                return jsonify({'error': 'Content-Type must be application/json'}), 415
+        return f(*args, **kwargs)
+    return decorated
+
+# ============================================================================
 # ROUTES - API ENDPOINTS (Legacy Web)
 # ============================================================================
 
 @app.route('/api/feedback', methods=['POST'])
+@require_json_content_type
 def submit_feedback():
     """Submit helpful/not helpful feedback for a result"""
     session = get_or_create_session()
@@ -875,6 +899,7 @@ def submit_feedback():
         return jsonify({'error': 'Failed to save feedback'}), 500
 
 @app.route('/api/media-literacy/claim', methods=['POST'])
+@require_json_content_type
 def claim_media_literacy_points():
     """Claim Internet Points for engaging with media literacy warning"""
     session = get_or_create_session()
@@ -905,37 +930,38 @@ def claim_media_literacy_points():
     points_to_award = 5
     
     try:
-        # Record interaction
+        # Record interaction (ON CONFLICT DO NOTHING prevents duplicate point grants)
         execute_db(
-            """INSERT INTO media_literacy_interactions 
+            """INSERT INTO media_literacy_interactions
                (session_id, page_id, warning_id, points_awarded)
-               VALUES (%s, %s, %s, %s)""",
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT DO NOTHING""",
             (session['session_id'], page_id, warning_id, points_to_award)
         )
-        
+
         # Update session points
         execute_db(
-            """UPDATE user_sessions 
+            """UPDATE user_sessions
                SET total_points = total_points + %s,
                    quests_completed = quests_completed + 1
                WHERE session_id = %s""",
             (points_to_award, session['session_id'])
         )
-        
+
         # Get updated total
         updated_session = query_db(
             "SELECT total_points, quests_completed FROM user_sessions WHERE session_id = %s",
             (session['session_id'],),
             one=True
         )
-        
+
         return jsonify({
             'success': True,
             'points_awarded': points_to_award,
             'total_points': updated_session['total_points'],
             'quests_completed': updated_session['quests_completed']
         })
-        
+
     except Exception as e:
         logger.error(f"Points claim error: {e}")
         return jsonify({'error': 'Failed to award points'}), 500
@@ -1185,6 +1211,7 @@ def api_v1_session_get(device_id):
 
 @app.route('/api/feedback', methods=['POST'])  # Alias for iOS app
 @app.route('/api/v1/feedback', methods=['POST'])
+@require_json_content_type
 def api_v1_feedback():
     """
     Submit feedback from mobile app (device-based auth)
@@ -1241,6 +1268,7 @@ def api_v1_feedback():
 
 @app.route('/api/media-literacy/claim', methods=['POST'])  # Alias for iOS app
 @app.route('/api/v1/media-literacy/claim', methods=['POST'])
+@require_json_content_type
 def api_v1_claim_media_literacy():
     """
     Claim Internet Points from mobile app (device-based auth)
@@ -1291,30 +1319,31 @@ def api_v1_claim_media_literacy():
     points_to_award = 5
     
     try:
-        # Record interaction
+        # Record interaction (ON CONFLICT DO NOTHING prevents duplicate point grants)
         execute_db(
-            """INSERT INTO media_literacy_interactions 
+            """INSERT INTO media_literacy_interactions
                (session_id, page_id, warning_id, points_awarded)
-               VALUES (%s, %s, %s, %s)""",
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT DO NOTHING""",
             (session['session_id'], page_id, warning_id, points_to_award)
         )
-        
+
         # Update session points
         execute_db(
-            """UPDATE user_sessions 
+            """UPDATE user_sessions
                SET total_points = total_points + %s,
                    quests_completed = quests_completed + 1
                WHERE session_id = %s""",
             (points_to_award, session['session_id'])
         )
-        
+
         # Get updated total
         updated_session = query_db(
             "SELECT total_points, quests_completed FROM user_sessions WHERE session_id = %s",
             (session['session_id'],),
             one=True
         )
-        
+
         # Get new rank
         rank = get_user_rank(updated_session['total_points'])
         

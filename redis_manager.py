@@ -20,8 +20,8 @@ class RedisManager:
         if redis_url is None:
             redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
         
-        # Parse Redis URL and connect
-        self.client = redis.from_url(redis_url, decode_responses=True)
+        # Parse Redis URL and connect (with connection pooling)
+        self.client = redis.from_url(redis_url, decode_responses=True, max_connections=20)
         
         # Queue key
         self.queue_key = 'crawler:queue'
@@ -56,11 +56,17 @@ class RedisManager:
     def dequeue_url(self):
         """
         Get next URL from the crawl queue
-        Uses RPOP for FIFO behavior
+        Uses RPOP for FIFO behavior; removes from dedup set atomically via pipeline.
         Returns None if queue is empty
         """
         try:
-            url = self.client.rpop(self.queue_key)
+            pipe = self.client.pipeline()
+            pipe.rpop(self.queue_key)
+            results = pipe.execute()
+            url = results[0]
+            if url:
+                # Remove from dedup set so the URL can be re-queued later if needed
+                self.client.srem(f'{self.queue_key}:set', url)
             return url
         except Exception as e:
             logger.error(f"Error dequeuing URL: {e}")

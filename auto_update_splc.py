@@ -99,7 +99,7 @@ class SPLCScraper:
                 domain = domain[4:]
             
             return domain if domain else None
-        except:
+        except Exception:
             return None
     
     def _is_likely_hate_site(self, domain, page_text):
@@ -107,18 +107,18 @@ class SPLCScraper:
         Heuristic check if domain is likely a hate group site
         (vs. social media, news coverage, etc.)
         """
-        # Skip social media
+        # Skip social media (exact domain or subdomain match to avoid false positives)
         social_media = ['facebook.com', 'twitter.com', 'youtube.com', 'instagram.com',
                        'tiktok.com', 'linkedin.com', 'reddit.com']
-        
-        if any(sm in domain for sm in social_media):
+
+        if any(domain == sm or domain.endswith('.' + sm) for sm in social_media):
             return False
-        
-        # Skip news sites
+
+        # Skip news sites (exact domain or subdomain match)
         news_sites = ['cnn.com', 'foxnews.com', 'nytimes.com', 'washingtonpost.com',
                      'reuters.com', 'apnews.com', 'bbc.com', 'npr.org']
-        
-        if any(news in domain for news in news_sites):
+
+        if any(domain == news or domain.endswith('.' + news) for news in news_sites):
             return False
         
         return True
@@ -173,29 +173,30 @@ class SPLCScraper:
         updated = 0
         
         for item in self.hate_domains:
-            if isinstance(item, tuple):
-                domain, reason = item
-            else:
-                domain = item
-                reason = "SPLC Hate Map - Automated scrape"
-            
             try:
+                if isinstance(item, tuple):
+                    domain, reason = item
+                else:
+                    domain = item
+                    reason = "SPLC Hate Map - Automated scrape"
+
                 cursor.execute("""
                     INSERT INTO org_blocklist (
                         domain, splc_flagged, reason, flagged_date, verification_source
                     ) VALUES (%s, TRUE, %s, %s, %s)
-                    ON CONFLICT (domain) 
-                    DO UPDATE SET 
+                    ON CONFLICT (domain)
+                    DO UPDATE SET
                         splc_flagged = TRUE,
                         reason = EXCLUDED.reason,
                         flagged_date = EXCLUDED.flagged_date
                 """, (domain, reason, date.today(), 'SPLC Automated Scraper'))
-                
+
                 updated += 1
                 logger.info(f"✅ Updated: {domain}")
-                
+
             except Exception as e:
-                logger.error(f"❌ Error updating {domain}: {e}")
+                logger.error(f"❌ Error updating item {item}: {e}")
+                continue
         
         self.db_conn.commit()
         cursor.close()
