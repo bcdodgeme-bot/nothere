@@ -255,10 +255,9 @@ def search_pages(query, sort='relevance', page=1):
             order_clause = "p.crawled_at DESC, similarity(p.title, %s) DESC"
             order_params = (query,)
         else:  # relevance (default)
-            order_clause = """(similarity(p.title, %s) * 3 + 
-                 ts_rank_cd(to_tsvector('english', p.title), plainto_tsquery('english', %s))) DESC,
+            order_clause = """similarity(p.title, %s) * 3 DESC,
                 p.final_composite_score DESC"""
-            order_params = (query, query)
+            order_params = (query,)
         
         # Main search query - uses UNION to let each index work independently
         # Branch 1: trigram match on title (uses idx_pages_title_trgm)
@@ -301,7 +300,7 @@ def search_pages(query, sort='relevance', page=1):
                 p.equity_boost,
                 p.crawled_at,
                 similarity(p.title, %s) as title_sim,
-                ts_rank_cd(to_tsvector('english', p.title), plainto_tsquery('english', %s)) as content_rank,
+                similarity(p.title, %s) as content_rank,
                 ed.minority_owned,
                 ed.women_owned,
                 ed.veteran_owned,
