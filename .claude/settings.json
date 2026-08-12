@@ -10,7 +10,15 @@
       "Bash(python3 -m py_compile redis_manager.py)",
       "Bash(python3 -m py_compile auto_update_splc.py)",
       "Bash(python3 -m py_compile auto_update_bcorp.py)",
-      "Bash(python3 -m py_compile automated_updater.py)"
+      "Bash(python3 -m py_compile automated_updater.py)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import flask\")",
+      "Bash(python3 -m venv v)",
+      "Bash(./v/bin/pip install *)",
+      "Bash(./v/bin/python -c \"print\\('venv ok'\\)\")",
+      "Bash(/private/tmp/claude-501/-Users-b-c-dodge-Documents-GitHub-nothere/d12a2c73-b252-4e7a-9675-42a97e5f9648/scratchpad/v/bin/python -c ' *)",
+      "Bash(git --no-pager diff)",
+      "Bash(git --no-pager diff --no-index /dev/null templates/support.html)"
     ]
   }
 }

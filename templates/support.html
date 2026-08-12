@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Support - NotHere.one{% endblock %}
+
+{% block content %}
+<div class="support-page">
+    <div class="support-container">
+        <header class="support-header">
+            <h1>Support</h1>
+            <p class="support-subtitle">Questions, bug reports, and bad results — send them our way.</p>
+        </header>
+
+        <!-- Contact -->
+        <section class="support-section support-highlight">
+            <h2>📬 Get in Touch</h2>
+            <p>
+                Email us and a real person will read it. Include the search you ran and
+                the URL you're asking about — it saves us a round trip.
+            </p>
+            <p class="support-email">
+                <a href="mailto:support@nothere.one">support@nothere.one</a>
+            </p>
+        </section>
+
+        <!-- FAQ -->
+        <section class="support-section">
+            <h2>❓ Frequently Asked Questions</h2>
+
+            <div class="support-faq-item">
+                <h3>What is NotHere.one?</h3>
+                <p>
+                    NotHere.one is an ethical search engine — an "algorithm of justice" that filters
+                    out harmful content while boosting diverse and trustworthy voices. No ads, no
+                    accounts, no tracking.
+                </p>
+            </div>
+
+            <div class="support-faq-item">
+                <h3>How is content filtered?</h3>
+                <p>
+                    We exclude content from SPLC-designated hate groups, misinformation and conspiracy
+                    sites, adult content, gambling, predatory lending, and MLM schemes. We boost
+                    minority-, women-, veteran-, LGBTQ+-, and disability-owned businesses along with
+                    B-Corp certified companies. The full breakdown lives on our
+                    <a href="{{ url_for('privacy') }}">privacy page</a>.
+                </p>
+            </div>
+
+            <div class="support-faq-item">
+                <h3>How do I report a result?</h3>
+                <p>
+                    Every result has 👍 / 👎 feedback buttons — that's the fastest signal and it feeds
+                    straight into our scoring. For something more serious (a site that should be filtered,
+                    or one we filtered by mistake), email
+                    <a href="mailto:support@nothere.one">support@nothere.one</a> with the URL and the
+                    search that surfaced it.
+                </p>
+            </div>
+
+            <div class="support-faq-item">
+                <h3>When will I hear back?</h3>
+                <p>
+                    We're a small team, so expect a reply within a few business days. Reports about
+                    harmful content that slipped through the filter jump the queue.
+                </p>
+            </div>
+        </section>
+
+        <!-- Back to Search -->
+        <div class="support-back">
+            <a href="{{ url_for('index') }}" class="back-link">
+                ← Back to Search
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

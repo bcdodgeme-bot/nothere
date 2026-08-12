@@ -816,6 +816,18 @@ def privacy():
     
     return set_session_cookie(response, session['session_id'])
 
+@app.route('/support')
+def support():
+    """Support / help page"""
+    session = get_or_create_session()
+
+    response = make_response(render_template(
+        'support.html',
+        session=session
+    ))
+
+    return set_session_cookie(response, session['session_id'])
+
 @app.route('/leaderboard')
 def leaderboard():
     """Leaderboard page"""
