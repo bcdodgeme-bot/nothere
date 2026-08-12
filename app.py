@@ -283,7 +283,7 @@ def search_pages(query, sort='relevance', page=1):
                 (SELECT id FROM pages
                 WHERE indexable = true
                   AND final_composite_score >= %s
-                  AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+                  AND content_tsv @@ plainto_tsquery('english', %s)
                 LIMIT 200)
             )
             SELECT 
