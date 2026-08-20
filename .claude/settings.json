@@ -24,7 +24,8 @@
       "Bash(python3 -m py_compile backfill_content_tsv.py)",
       "Bash(python3 backfill_content_tsv.py --help)",
       "Bash(/private/tmp/claude-501/-Users-b-c-dodge-Documents-GitHub-nothere/d12a2c73-b252-4e7a-9675-42a97e5f9648/scratchpad/v/bin/pip install *)",
-      "Bash(echo \"--- exit: $?\")"
+      "Bash(echo \"--- exit: $?\")",
+      "Bash(echo \"--- exit $?\")"
     ]
   }
 }

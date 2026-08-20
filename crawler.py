@@ -39,6 +39,36 @@ RESEED_WAIT_MINUTES = 10
 # Cache size limits to prevent OOM
 MAX_ROBOTS_CACHE_SIZE = 500
 
+# Hard cap on the Redis frontier (crawler:queue).
+# An unbounded frontier reached 74.7M URLs / 14GB and OOM-killed the host on
+# 2026-08-19. Discovered links are cheap and get re-found constantly, so
+# dropping them once the queue is this deep is safe.
+MAX_QUEUE_SIZE = 2_000_000
+
+# LRANGE window used when rebuilding the dedupe set from the queue.
+# Bounded so a 2M-entry frontier never lands in Python memory at once.
+QUEUE_SET_REBUILD_CHUNK = 10_000
+
+# Bot-challenge / JS-shell interstitials. Matched case-insensitively against
+# extracted text; matching pages are never written to Postgres.
+#
+# Two tiers, so a generic phrase can't swallow legitimate pages. Phrases here
+# are specific enough to the interstitial that they can match at any length.
+ALWAYS_JUNK = (
+    "Making sure you're not a bot",
+    "You need to enable JavaScript",
+    "enable JavaScript to run this app",
+    "Protected by Anubis",
+    "Made with ❤️ by Xe",
+)
+
+# These also occur in genuine articles (crypto, security writing), so they are
+# only trusted on pages too short to be real content.
+JUNK_IF_SHORT_MAX_LEN = 2000
+JUNK_IF_SHORT = (
+    "Proof-of-Work",
+)
+
 
 class LRUCache(OrderedDict):
     """Simple LRU cache using OrderedDict"""
@@ -99,10 +129,105 @@ class Crawler:
             'pages_score_failed': 0,
             'links_found': 0,
             'urls_queued': 0,
+            'urls_dropped_cap': 0,
+            'pages_skipped_junk': 0,
             'reseeds': 0,
             'cache_clears': 0
         }
     
+    def rebuild_queue_set(self):
+        """
+        Rebuild crawler:queue:set from the current contents of crawler:queue.
+
+        The dedupe set only ever tracks URLs *currently sitting in the queue*
+        (enqueue_url SADDs, dequeue_url SREMs), so the queue itself is a
+        complete source for rebuilding it. Postgres url_hash remains the
+        source of truth for "already crawled" -- that is deliberately not
+        duplicated here.
+
+        Runs when the set is missing or smaller than the queue, which covers
+        the set having been deleted by hand. Walks the queue with LRANGE in
+        fixed windows and SADDs each window, so peak Python memory is one
+        chunk rather than the whole frontier.
+        """
+        client = self.redis.client
+        queue_key = self.redis.queue_key
+        set_key = f'{queue_key}:set'
+
+        try:
+            queue_len = client.llen(queue_key)
+            set_len = client.scard(set_key)
+        except Exception as e:
+            logger.error(f"Could not read queue/set sizes, skipping rebuild: {e}")
+            return 0
+
+        if queue_len == 0:
+            logger.info("Queue is empty - nothing to rebuild into the dedupe set")
+            return 0
+
+        # set_len >= queue_len means every queued URL is already tracked
+        # (enqueue only LPUSHes when the SADD was new, so the set is a
+        # superset of the list under normal operation).
+        if set_len >= queue_len:
+            logger.info(
+                f"Dedupe set healthy (set={set_len}, queue={queue_len}) - no rebuild needed"
+            )
+            return 0
+
+        logger.info(
+            f"🔧 Rebuilding {set_key} from {queue_key} "
+            f"(set={set_len}, queue={queue_len}, chunk={QUEUE_SET_REBUILD_CHUNK})..."
+        )
+
+        added = 0
+        scanned = 0
+        try:
+            while scanned < queue_len:
+                chunk = client.lrange(
+                    queue_key, scanned, scanned + QUEUE_SET_REBUILD_CHUNK - 1
+                )
+                if not chunk:
+                    break
+                added += client.sadd(set_key, *chunk)
+                scanned += len(chunk)
+
+                if scanned % (QUEUE_SET_REBUILD_CHUNK * 10) == 0:
+                    logger.info(f"   ...{scanned}/{queue_len} scanned, {added} added")
+        except Exception as e:
+            logger.error(f"Dedupe set rebuild failed after {scanned} URLs: {e}")
+            return added
+
+        logger.info(
+            f"✅ Dedupe set rebuilt: {added} URLs added from {scanned} queue entries"
+        )
+        return added
+
+    def junk_content_match(self, content):
+        """
+        Return the sentinel phrase if this page is a bot-challenge or JS-shell
+        interstitial rather than real content, else None. Callers must skip
+        saving these to Postgres entirely.
+
+        ALWAYS_JUNK phrases name the interstitial specifically, so they match
+        at any length. JUNK_IF_SHORT phrases also turn up in real writing, so
+        they only count on pages too short to be genuine content.
+        """
+        if not content:
+            return None
+
+        haystack = content.lower()
+
+        for sentinel in ALWAYS_JUNK:
+            if sentinel.lower() in haystack:
+                return sentinel
+
+        if len(content) < JUNK_IF_SHORT_MAX_LEN:
+            for sentinel in JUNK_IF_SHORT:
+                if sentinel.lower() in haystack:
+                    return sentinel
+
+        return None
+
     def normalize_url(self, url):
         """Normalize URL for consistent handling"""
         url = url.strip()
@@ -339,6 +464,14 @@ class Crawler:
     
     def queue_url(self, url):
         """Add URL to crawl queue if not blocked and not already crawled"""
+        # FRONTIER CAP: stop accepting new work once the queue hits the
+        # ceiling. Checked first so capped URLs cost one LLEN instead of a
+        # blocklist walk plus a Postgres url_hash lookup.
+        if self.redis.queue_size() >= MAX_QUEUE_SIZE:
+            self.stats['urls_dropped_cap'] += 1
+            logger.debug(f"Frontier at cap ({MAX_QUEUE_SIZE}), dropping: {url}")
+            return False
+
         # Check blocklist
         is_blocked, reason = self.blocklist.is_blocked(url)
         if is_blocked:
@@ -407,6 +540,14 @@ class Crawler:
         extracted = self.extract_content(response.text, final_url)
         if extracted is None:
             self.stats['pages_failed'] += 1
+            return
+        
+        # JUNK FILTER: bot-challenge / JS-shell interstitials are not real
+        # content. Drop before save_page so they never reach Postgres.
+        junk_match = self.junk_content_match(extracted['content'])
+        if junk_match:
+            logger.warning(f"🗑️  Junk page (matched {junk_match!r}), not saving: {final_url}")
+            self.stats['pages_skipped_junk'] += 1
             return
         
         # Save page
@@ -497,6 +638,10 @@ class Crawler:
         logger.info(f"Starting crawler in IMMORTAL MODE (max_pages={max_pages})")
         logger.info(f"Will wait {RESEED_WAIT_MINUTES} minutes and reseed when queue empties")
         logger.info(f"Memory optimization: robots_cache max={MAX_ROBOTS_CACHE_SIZE}, scorer caches max=500")
+        logger.info(f"Frontier cap: {MAX_QUEUE_SIZE:,} URLs (discovered links dropped beyond this)")
+        
+        # Rebuild the dedupe set before crawling if it is missing or undersized
+        self.rebuild_queue_set()
         
         pages_crawled = 0
         consecutive_empty = 0
@@ -569,6 +714,8 @@ class Crawler:
         logger.info(f"Pages failed:      {self.stats['pages_failed']}")
         logger.info(f"Links found:       {self.stats['links_found']}")
         logger.info(f"URLs queued:       {self.stats['urls_queued']}")
+        logger.info(f"URLs dropped(cap): {self.stats['urls_dropped_cap']}")
+        logger.info(f"Junk pages skipped:{self.stats['pages_skipped_junk']}")
         logger.info(f"Queue reseeds:     {self.stats['reseeds']}")
         logger.info(f"Cache clears:      {self.stats['cache_clears']}")
         logger.info(f"Current queue:     {self.redis.queue_size()}")
