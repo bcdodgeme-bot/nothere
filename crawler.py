@@ -69,6 +69,16 @@ JUNK_IF_SHORT = (
     "Proof-of-Work",
 )
 
+# Hosts that are never worth crawling. Wayback rewrites every link it serves
+# into /web/<timestamp>/<original-url>, so each capture is a distinct URL and
+# each crawled page yields a fresh batch of them -- an unbounded frontier
+# source. Matched against the hostname, so subdomains are covered by the
+# parent entry.
+BLOCKED_URL_HOSTS = (
+    "archive.org",
+    "web.archive.org",
+)
+
 
 class LRUCache(OrderedDict):
     """Simple LRU cache using OrderedDict"""
@@ -130,6 +140,7 @@ class Crawler:
             'links_found': 0,
             'urls_queued': 0,
             'urls_dropped_cap': 0,
+            'urls_skipped_archive': 0,
             'pages_skipped_junk': 0,
             'reseeds': 0,
             'cache_clears': 0
@@ -226,6 +237,33 @@ class Crawler:
                 if sentinel.lower() in haystack:
                     return sentinel
 
+        return None
+
+    def blocked_host_match(self, url):
+        """
+        Return the blocked host if this URL points at one, else None.
+
+        Matches the hostname itself and any subdomain of it, so the
+        archive.org entry also catches web.archive.org.
+        """
+        try:
+            host = urlparse(url).netloc.lower()
+        except Exception:
+            return None
+
+        if not host:
+            return None
+
+        if '@' in host:            # strip userinfo
+            host = host.rsplit('@', 1)[1]
+        if ':' in host:            # strip port
+            host = host.split(':', 1)[0]
+        if host.startswith('www.'):
+            host = host[4:]
+
+        for blocked in BLOCKED_URL_HOSTS:
+            if host == blocked or host.endswith('.' + blocked):
+                return blocked
         return None
 
     def normalize_url(self, url):
@@ -472,6 +510,14 @@ class Crawler:
             logger.debug(f"Frontier at cap ({MAX_QUEUE_SIZE}), dropping: {url}")
             return False
 
+        # ARCHIVE FILTER: never enqueue wayback/archive.org URLs. Checked
+        # before the Postgres url_hash lookup, same as the cap.
+        blocked_host = self.blocked_host_match(url)
+        if blocked_host:
+            self.stats['urls_skipped_archive'] += 1
+            logger.debug(f"Archive host ({blocked_host}), not queuing: {url}")
+            return False
+
         # Check blocklist
         is_blocked, reason = self.blocklist.is_blocked(url)
         if is_blocked:
@@ -497,6 +543,14 @@ class Crawler:
         url = self.normalize_url(url)
         url_hash = self.get_url_hash(url)
         
+        # ARCHIVE FILTER: drop entries already sitting in the queue from
+        # before this filter existed.
+        blocked_host = self.blocked_host_match(url)
+        if blocked_host:
+            logger.info(f"⏭️  Archive host ({blocked_host}), skipping: {url}")
+            self.stats['urls_skipped_archive'] += 1
+            return
+
         # Check if already crawled
         if self.is_url_crawled(url_hash):
             logger.info(f"Already crawled: {url}")
@@ -534,6 +588,13 @@ class Crawler:
             if is_blocked:
                 logger.warning(f"⛔ Blocked after redirect: {final_url} - {reason}")
                 self.stats['pages_blocked'] += 1
+                return
+
+            # ARCHIVE FILTER: a non-archive URL can redirect into wayback.
+            blocked_host = self.blocked_host_match(final_url)
+            if blocked_host:
+                logger.info(f"⏭️  Redirected to archive host ({blocked_host}), skipping: {final_url}")
+                self.stats['urls_skipped_archive'] += 1
                 return
         
         # Extract content
@@ -715,6 +776,7 @@ class Crawler:
         logger.info(f"Links found:       {self.stats['links_found']}")
         logger.info(f"URLs queued:       {self.stats['urls_queued']}")
         logger.info(f"URLs dropped(cap): {self.stats['urls_dropped_cap']}")
+        logger.info(f"Archive skipped:   {self.stats['urls_skipped_archive']}")
         logger.info(f"Junk pages skipped:{self.stats['pages_skipped_junk']}")
         logger.info(f"Queue reseeds:     {self.stats['reseeds']}")
         logger.info(f"Cache clears:      {self.stats['cache_clears']}")
